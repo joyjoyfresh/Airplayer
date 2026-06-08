@@ -1,0 +1,31 @@
+# Python 字节码缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python 虚拟环境
+.env/
+.venv/
+venv/
+
+# 分发/打包
+*.egg-info/
+dist/
+build/
+
+# 编辑器/IDE 临时文件
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# PDF 文件
+*.pdf
+
+# PNG 图片
+*.png
+*.PNG
+
+# 自定义
+test/
+outputs*/

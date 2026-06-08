@@ -1,0 +1,19 @@
+{
+  "dangerouslySkipPermissions": true,
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Read",
+      "Write",
+      "Edit"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(curl *)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  }
+}
