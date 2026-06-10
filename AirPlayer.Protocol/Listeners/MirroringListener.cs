@@ -24,6 +24,8 @@ namespace AirPlayer.Protocol.Listeners
 
         private byte[] _og = new byte[16];
         private int _nextDecryptCount;
+        private int _videoFrameCount; // 诊断：已接收视频帧计数
+        private int _onDataCount;     // 诊断：已派发到渲染层的帧计数
 
         public MirroringListener(IRtspReceiver receiver, string sessionId, ushort port) : base(port, true)
         {
@@ -38,12 +40,34 @@ namespace AirPlayer.Protocol.Listeners
             // Get session by active-remove header value
             var session = await SessionManager.Current.GetSessionAsync(_sessionId);
 
+            // 诊断：镜像数据连接已建立，确认密钥材料是否就绪
+            DiagLog.Write($"[MIRROR] 数据连接建立 KeyMsg={(session.KeyMsg == null ? "null" : session.KeyMsg.Length + "B")} AesKey={(session.AesKey == null ? "null" : session.AesKey.Length + "B")} EcdhShared={(session.EcdhShared == null ? "null" : "ok")} streamConnId={session.StreamConnectionId ?? "null"}");
+
             // If we have not decripted session AesKey
             if (session.DecryptedAesKey == null)
             {
-                byte[] decryptedAesKey = new byte[16];
-                _omgHax.DecryptAesKey(session.KeyMsg, session.AesKey, decryptedAesKey);
-                session.DecryptedAesKey = decryptedAesKey;
+                try
+                {
+                    byte[] decryptedAesKey = new byte[16];
+                    _omgHax.DecryptAesKey(session.KeyMsg, session.AesKey, decryptedAesKey);
+                    session.DecryptedAesKey = decryptedAesKey;
+                    DiagLog.Write("[MIRROR] AES 密钥解密完成");
+                }
+                catch (Exception ex)
+                {
+                    // 打印完整异常链（含内部异常），定位是文件未嵌入还是解析失败
+                    var inner = ex;
+                    while (inner.InnerException != null) inner = inner.InnerException;
+                    DiagLog.Write($"[MIRROR] AES 密钥解密异常: {ex.GetType().Name}: {ex.Message} | 内部: {inner.GetType().Name}: {inner.Message}");
+
+                    // 额外列出程序集中实际嵌入的资源名，确认表文件是否打进去了
+                    try
+                    {
+                        var names = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceNames();
+                        DiagLog.Write($"[MIRROR] 已嵌入资源({names.Length}): [{string.Join(", ", names)}]");
+                    }
+                    catch { }
+                }
             }
 
             // Reset cipher state for new connection
@@ -126,12 +150,18 @@ namespace AirPlayer.Protocol.Listeners
                             long framePts = header.PayloadPts;
                             int width = session.WidthSource ?? 1920;
                             int height = session.HeightSource ?? 1080;
+                            // 诊断：统计视频帧（首帧及每 60 帧）
+                            _videoFrameCount++;
+                            if (_videoFrameCount == 1 || _videoFrameCount % 60 == 0)
+                                DiagLog.Write($"[MIRROR] 视频帧#{_videoFrameCount} size={output.Length} spsPps={(session.SpsPps == null ? "null(丢弃)" : "ok")} pts={framePts} {width}x{height}");
                             ProcessVideo(output, session.SpsPps, framePts, width, height);
                         }
                         else if (header.PayloadType == 1)
                         {
                             ProcessSpsPps(payload, out byte[] spsPps);
                             session.SpsPps = spsPps;
+                            // 诊断：收到编解码配置（SPS/PPS）
+                            DiagLog.Write($"[MIRROR] 收到编解码配置 SPS/PPS={(spsPps == null ? "null" : spsPps.Length + "B")} {session.WidthSource}x{session.HeightSource}");
                         }
                     }
                     catch (Exception e)
@@ -253,6 +283,11 @@ namespace AirPlayer.Protocol.Listeners
             h264Data.Pts = pts;
             h264Data.Width = widthSource;
             h264Data.Height = heightSource;
+
+            // 诊断：派发帧到渲染层（首帧及每 60 帧）
+            _onDataCount++;
+            if (_onDataCount == 1 || _onDataCount % 60 == 0)
+                DiagLog.Write($"[MIRROR] 派发渲染帧#{_onDataCount} type={h264Data.FrameType} len={h264Data.Length} pts={pts}");
 
             _receiver.OnData(h264Data);
         }

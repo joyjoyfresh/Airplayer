@@ -3,8 +3,8 @@
   "WorkspaceRootPath": "C:\\Users\\12462\\Documents\\Code\\Airplayer\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{B2C3D4E5-F6A7-8901-BCDE-F12345678901}|AirPlayer.App\\AirPlayer.App.csproj|c:\\users\\12462\\documents\\code\\airplayer\\airplayer.app\\airplayer.app.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|",
-      "RelativeMoniker": "D:0:0:{B2C3D4E5-F6A7-8901-BCDE-F12345678901}|AirPlayer.App\\AirPlayer.App.csproj|solutionrelative:airplayer.app\\airplayer.app.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|"
+      "AbsoluteMoniker": "D:0:0:{B2C3D4E5-F6A7-8901-BCDE-F12345678901}|AirPlayer.App\\AirPlayer.App.csproj|c:\\users\\12462\\documents\\code\\airplayer\\airplayer.app\\app.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}",
+      "RelativeMoniker": "D:0:0:{B2C3D4E5-F6A7-8901-BCDE-F12345678901}|AirPlayer.App\\AirPlayer.App.csproj|solutionrelative:airplayer.app\\app.xaml||{F11ACC28-31D1-4C80-A34B-F4E09D3D753C}"
     }
   ],
   "DocumentGroupContainers": [
@@ -19,14 +19,14 @@
             {
               "$type": "Document",
               "DocumentIndex": 0,
-              "Title": "AirPlayer.App.csproj",
-              "DocumentMoniker": "C:\\Users\\12462\\Documents\\Code\\Airplayer\\AirPlayer.App\\AirPlayer.App.csproj",
-              "RelativeDocumentMoniker": "AirPlayer.App\\AirPlayer.App.csproj",
-              "ToolTip": "C:\\Users\\12462\\Documents\\Code\\Airplayer\\AirPlayer.App\\AirPlayer.App.csproj",
-              "RelativeToolTip": "AirPlayer.App\\AirPlayer.App.csproj",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAABgAAAAAAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
-              "WhenOpened": "2026-06-10T02:10:54.883Z",
+              "Title": "App.xaml",
+              "DocumentMoniker": "C:\\Users\\12462\\Documents\\Code\\Airplayer\\AirPlayer.App\\App.xaml",
+              "RelativeDocumentMoniker": "AirPlayer.App\\App.xaml",
+              "ToolTip": "C:\\Users\\12462\\Documents\\Code\\Airplayer\\AirPlayer.App\\App.xaml",
+              "RelativeToolTip": "AirPlayer.App\\App.xaml",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA0AAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
+              "WhenOpened": "2026-06-10T07:15:04.233Z",
               "EditorCaption": ""
             }
           ]

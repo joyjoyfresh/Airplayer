@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using AirPlayer.Protocol.Listeners;
 using AirPlayer.Protocol.Models;
+using AirPlayer.Protocol.Models.Audio;
 using Makaretu.Dns;
 
 namespace AirPlayer.Protocol
@@ -29,13 +30,62 @@ namespace AirPlayer.Protocol
         private readonly ushort _airPlayPort;
         private readonly string _deviceId;
 
-        public AirPlayReceiver(string instance, string deviceId = "11:22:33:44:55:66", ushort airTunesPort = 7000, ushort airPlayPort = 7001)
+        public AirPlayReceiver(string instance, ushort airTunesPort = 7020, ushort airPlayPort = 7021)
         {
             _instance = instance ?? throw new ArgumentNullException(nameof(instance));
-            _deviceId = deviceId;
             _airTunesPort = airTunesPort;
             _airPlayPort = airPlayPort;
-            _airTunesListener = new AirTunesListener(this, _airTunesPort, _airPlayPort, new Models.Configs.DumpConfig());
+
+            // 加载或生成本机随机身份（MAC + ED25519 种子），持久化后重启保持稳定
+            var (deviceId, seed) = LoadOrCreateIdentity();
+            _deviceId = deviceId;
+            _airTunesListener = new AirTunesListener(this, _airTunesPort, _airPlayPort, new Models.Configs.DumpConfig(), _instance, _deviceId, seed);
+        }
+
+        /// <summary>
+        /// 加载本机持久化身份；不存在时生成随机 MAC 与 ED25519 种子并保存
+        /// </summary>
+        private static (string deviceId, byte[] seed) LoadOrCreateIdentity()
+        {
+            // 身份文件存放在本地 AppData，保证每台机器唯一且重启后不变
+            var dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AirPlayer");
+            var file = System.IO.Path.Combine(dir, "identity.dat");
+            try
+            {
+                if (System.IO.File.Exists(file))
+                {
+                    var lines = System.IO.File.ReadAllLines(file); // 第一行 MAC，第二行 Base64 种子
+                    if (lines.Length >= 2)
+                    {
+                        var savedId = lines[0].Trim();
+                        var savedSeed = Convert.FromBase64String(lines[1].Trim());
+                        if (savedSeed.Length == 32 && !string.IsNullOrWhiteSpace(savedId))
+                        {
+                            return (savedId, savedSeed);
+                        }
+                    }
+                }
+            }
+            catch { /* 读取损坏则重新生成 */ }
+
+            // 生成新的随机种子
+            var newSeed = new byte[32];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(newSeed);
+
+            // 生成随机 MAC（置位「本地管理」位、清除「组播」位）
+            var mac = new byte[6];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(mac);
+            mac[0] = (byte)((mac[0] & 0xFE) | 0x02);
+            var newDeviceId = string.Join(":", mac.Select(b => b.ToString("X2")));
+
+            try
+            {
+                System.IO.Directory.CreateDirectory(dir); // 确保目录存在
+                System.IO.File.WriteAllLines(file, new[] { newDeviceId, Convert.ToBase64String(newSeed) }); // 持久化身份
+            }
+            catch { /* 写入失败不影响本次运行，仅下次重启会变 */ }
+
+            return (newDeviceId, newSeed);
         }
 
         public async Task StartListeners(CancellationToken cancellationToken)
@@ -60,7 +110,11 @@ namespace AirPlayer.Protocol
             _mdns = new MulticastService();
             var sd = new ServiceDiscovery(_mdns);
 
-            var airTunes = new ServiceProfile($"{deviceIdInstance}@{_instance}", AirTunesType, _airTunesPort);
+            // 使用已绑定的控制端口发布服务，避免 iOS 连接到尚未监听的数据端口
+            int actualAirTunesPort = _airTunesListener != null ? _airTunesListener.LocalPort : _airTunesPort;
+            var publicKeyHex = _airTunesListener != null ? _airTunesListener.PublicKeyHex : string.Empty;
+
+            var airTunes = new ServiceProfile($"{deviceIdInstance}@{_instance}", AirTunesType, (ushort)actualAirTunesPort);
             airTunes.AddProperty("ch", "2");
             airTunes.AddProperty("cn", "0,1,2,3");
             airTunes.AddProperty("et", "0,3,5");
@@ -71,19 +125,21 @@ namespace AirPlayer.Protocol
             airTunes.AddProperty("sv", "false");
             airTunes.AddProperty("ft", "0x5A7FFFF7,0x1E");
             airTunes.AddProperty("am", "AppleTV5,3");
-            airTunes.AddProperty("pk", "29fbb183a58b466e05b9ab667b3c429d18a6b785637333d3f0f3a34baa89f45e");
+            airTunes.AddProperty("pk", publicKeyHex);
+            airTunes.AddProperty("pw", "false");
             airTunes.AddProperty("sf", "0x4");
             airTunes.AddProperty("tp", "UDP");
             airTunes.AddProperty("vn", "65537");
             airTunes.AddProperty("vs", "220.68");
             airTunes.AddProperty("vv", "2");
 
-            var airPlay = new ServiceProfile(_instance, AirPlayType, _airPlayPort);
+            var airPlay = new ServiceProfile(_instance, AirPlayType, (ushort)actualAirTunesPort);
             airPlay.AddProperty("deviceid", _deviceId);
             airPlay.AddProperty("features", "0x5A7FFFF7,0x1E");
+            airPlay.AddProperty("pw", "false");
             airPlay.AddProperty("flags", "0x4");
             airPlay.AddProperty("model", "AppleTV5,3");
-            airPlay.AddProperty("pk", "29fbb183a58b466e05b9ab667b3c429d18a6b785637333d3f0f3a34baa89f45e");
+            airPlay.AddProperty("pk", publicKeyHex);
             airPlay.AddProperty("pi", "aa072a95-0318-4ec3-b042-4992495877d3");
             airPlay.AddProperty("srcvers", "220.68");
             airPlay.AddProperty("vv", "2");
@@ -105,7 +161,7 @@ namespace AirPlayer.Protocol
             OnH264DataReceived?.Invoke(this, data);
         }
 
-        public void OnPCMData(byte[] pcmData)
+        public void OnPCMData(PcmData pcmData)
         {
             // v1 不处理音频，直接丢弃
         }

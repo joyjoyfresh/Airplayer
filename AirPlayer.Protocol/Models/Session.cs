@@ -13,6 +13,7 @@ namespace AirPlayer.Protocol.Models
         public byte[] EcdhTheirs { get; set; } = null;
         public byte[] EdTheirs { get; set; } = null;
         public byte[] EcdhShared { get; set; } = null;
+        public Org.BouncyCastle.Crypto.IBufferedCipher VerifyCipher { get; set; } = null; // pair-verify 的 AES-CTR cipher，必须跨 M1/M2 复用以保持计数器连续
         public bool? PairVerified { get; set; } = null;
         public byte[] KeyMsg { get; set; } = null;
         public byte[] AesKey { get; set; } = null;

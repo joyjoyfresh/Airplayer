@@ -1,10 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using AirPlayer.Protocol.Utils;
+using System.Runtime.Serialization.Plists;
 
-namespace AirPlayer.Protocoler.Protocoler.Protocoler.Protocol.DmapTagged
+namespace AirPlayer.Protocol.DmapTagged
 {
     public class DMapTagged
     {

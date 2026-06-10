@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AirPlayer.App")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+96bdc92f39fdeb53b3c0fb183525e8a3b964d9bf")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+38828911ac2d9967955e30415f06cccfe2979ee4")]
 [assembly: System.Reflection.AssemblyProductAttribute("AirPlayer.App")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AirPlayer.App")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

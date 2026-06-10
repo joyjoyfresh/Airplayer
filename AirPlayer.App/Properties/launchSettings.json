@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "AirPlayer.App (Unpackaged)": {
+      "commandName": "Project",
+      "executablePath": "$(TargetPath)",
+      "commandLineArgs": "",
+      "workingDirectory": "$(ProjectDir)",
+      "nativeDebugging": false
+    }
+  }
+}

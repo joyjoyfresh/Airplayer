@@ -22,14 +22,21 @@ namespace AirPlayer.Protocol.Services
 
         public Task<Session> GetSessionAsync(string key)
         {
+            key = NormalizeKey(key);
             _sessions.TryGetValue(key, out Session? session);
             return Task.FromResult(session ?? new Session(key));
         }
 
         public Task CreateOrUpdateSessionAsync(string key, Session session)
         {
+            key = NormalizeKey(key);
             _sessions.AddOrUpdate(key, session, (k, old) => session);
             return Task.CompletedTask;
+        }
+
+        private static string NormalizeKey(string key)
+        {
+            return string.IsNullOrWhiteSpace(key) ? "default" : key;
         }
     }
 }

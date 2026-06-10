@@ -76,10 +76,28 @@ namespace AirPlayer.Protocol
             TableS10 = ReadTableBytes("table_s10");
         }
 
-        private static byte[] ReadTableBytes(string key)
+        /// <summary>
+        /// 按资源名后缀定位嵌入的表文件，兼容不同根命名空间（如 AirPlay.Resources.* 或 AirPlayer.Protocol.Resources.*）
+        /// </summary>
+        private static Stream GetTableStream(string key)
         {
             var assembly = Assembly.GetExecutingAssembly();
-            using(var s = assembly.GetManifestResourceStream($"AirPlay.Resources.{key}.bin"))
+            var names = assembly.GetManifestResourceNames();
+            // 依次尝试：旧名称精确匹配 -> 任意命名空间后缀匹配
+            var name = names.FirstOrDefault(n => n.Equals($"AirPlay.Resources.{key}.bin", StringComparison.OrdinalIgnoreCase))
+                       ?? names.FirstOrDefault(n => n.EndsWith($".{key}.bin", StringComparison.OrdinalIgnoreCase))
+                       ?? names.FirstOrDefault(n => n.EndsWith($"{key}.bin", StringComparison.OrdinalIgnoreCase));
+            if (name == null)
+            {
+                throw new FileNotFoundException(
+                    $"缺少 FairPlay 解密表 '{key}.bin'。请将 table_s1~table_s10.bin 放入 AirPlayer.Protocol/Resources/ 并设为嵌入资源。当前已嵌入资源: [{string.Join(", ", names)}]");
+            }
+            return assembly.GetManifestResourceStream(name);
+        }
+
+        private static byte[] ReadTableBytes(string key)
+        {
+            using (var s = GetTableStream(key))
             using (StreamReader reader = new StreamReader(s))
             {
                 var data = reader.ReadToEnd();
@@ -97,8 +115,7 @@ namespace AirPlayer.Protocol
 
         private static int[] ReadTableInts(string key)
         {
-            var assembly = Assembly.GetExecutingAssembly();
-            using (var s = assembly.GetManifestResourceStream($"AirPlay.Resources.{key}.bin"))
+            using (var s = GetTableStream(key))
             using (StreamReader reader = new StreamReader(s))
             {
                 var data = reader.ReadToEnd();

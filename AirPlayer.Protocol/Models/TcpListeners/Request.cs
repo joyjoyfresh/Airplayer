@@ -15,7 +15,8 @@ namespace AirPlayer.Protocol.Models
     {
         public const string AIRTUNES_SERVER_VERSION = "AirTunes/220.68";
 
-        private readonly string _hex;
+        private readonly byte[] _rawRequest;
+        private readonly byte[] _headerBytes;
         private bool _valid = true;
         private RequestType _type;
         private string _path;
@@ -30,21 +31,39 @@ namespace AirPlayer.Protocol.Models
         public byte[] Body => _rawBody;
         public HeadersCollection Headers => _headers;
 
-        public Request(string hex)
+        public Request(string hex) : this(HexToBytes(hex ?? throw new ArgumentNullException(nameof(hex))))
         {
-            _hex = hex ?? throw new ArgumentNullException(nameof(hex));
+        }
+
+        public Request(byte[] rawRequest)
+        {
+            _rawRequest = rawRequest ?? throw new ArgumentNullException(nameof(rawRequest));
             _headers = new HeadersCollection();
+            _rawBody = Array.Empty<byte>();
+
+            var headerLength = FindHeaderLength(_rawRequest);
+            if (headerLength < 0)
+            {
+                _valid = false;
+                _headerBytes = _rawRequest;
+            }
+            else
+            {
+                _headerBytes = _rawRequest.Take(headerLength).ToArray();
+            }
+
             Initialize();
         }
 
         public Task<byte[]> GetFullRawAsync()
         {
-            return Task.FromResult(HexToBytes(_hex));
+            return Task.FromResult(_rawRequest);
         }
 
         private void Initialize()
         {
-            var rows = _hex.Split("0D0A", StringSplitOptions.None).ToArray();
+            var headerText = Encoding.ASCII.GetString(_headerBytes);
+            var rows = headerText.Split(new[] { "\r\n" }, StringSplitOptions.None).ToArray();
 
             if (rows?.Any() == false)
             {
@@ -92,59 +111,53 @@ namespace AirPlayer.Protocol.Models
                 var contentLength = _headers.GetValue<int>("Content-Length");
                 if (contentLength > 0)
                 {
-                    var requestBytes = HexToBytes(_hex);
-                    var bodyBytes = requestBytes.Skip(requestBytes.Length - contentLength).ToArray();
+                    var bodyOffset = _headerBytes.Length + 4;
+                    var bodyBytes = _rawRequest.Skip(bodyOffset).Take(contentLength).ToArray();
                     if (contentLength == bodyBytes.Length)
                     {
                         _rawBody = bodyBytes;
                     }
                     else
                     {
-                        throw new Exception("wrong body length");
+                        _valid = false;
                     }
                 }
-                else
-                {
-                    _rawBody = new byte[0];
-                }
             }
         }
 
-        private RequestType? ResolveRequestType(string hex)
+        private RequestType? ResolveRequestType(string line)
         {
-            if (hex.StartsWith(RequestConst.GET, StringComparison.OrdinalIgnoreCase)) return RequestType.GET;
-            if (hex.StartsWith(RequestConst.POST, StringComparison.OrdinalIgnoreCase)) return RequestType.POST;
-            if (hex.StartsWith(RequestConst.SETUP, StringComparison.OrdinalIgnoreCase)) return RequestType.SETUP;
-            if (hex.StartsWith(RequestConst.RECORD, StringComparison.OrdinalIgnoreCase)) return RequestType.RECORD;
-            if (hex.StartsWith(RequestConst.GET_PARAMETER, StringComparison.OrdinalIgnoreCase)) return RequestType.GET_PARAMETER;
-            if (hex.StartsWith(RequestConst.SET_PARAMETER, StringComparison.OrdinalIgnoreCase)) return RequestType.SET_PARAMETER;
-            if (hex.StartsWith(RequestConst.OPTIONS, StringComparison.OrdinalIgnoreCase)) return RequestType.OPTIONS;
-            if (hex.StartsWith(RequestConst.ANNOUNCE, StringComparison.OrdinalIgnoreCase)) return RequestType.ANNOUNCE;
-            if (hex.StartsWith(RequestConst.FLUSH, StringComparison.OrdinalIgnoreCase)) return RequestType.FLUSH;
-            if (hex.StartsWith(RequestConst.TEARDOWN, StringComparison.OrdinalIgnoreCase)) return RequestType.TEARDOWN;
-            if (hex.StartsWith(RequestConst.PAUSE, StringComparison.OrdinalIgnoreCase)) return RequestType.PAUSE;
-            if (hex.StartsWith(RequestConst.SETPEERS, StringComparison.OrdinalIgnoreCase)) return RequestType.SETPEERS;
+            var method = line.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (method == null) return null;
+            if (method.Equals("GET", StringComparison.OrdinalIgnoreCase)) return RequestType.GET;
+            if (method.Equals("POST", StringComparison.OrdinalIgnoreCase)) return RequestType.POST;
+            if (method.Equals("SETUP", StringComparison.OrdinalIgnoreCase)) return RequestType.SETUP;
+            if (method.Equals("RECORD", StringComparison.OrdinalIgnoreCase)) return RequestType.RECORD;
+            if (method.Equals("GET_PARAMETER", StringComparison.OrdinalIgnoreCase)) return RequestType.GET_PARAMETER;
+            if (method.Equals("SET_PARAMETER", StringComparison.OrdinalIgnoreCase)) return RequestType.SET_PARAMETER;
+            if (method.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase)) return RequestType.OPTIONS;
+            if (method.Equals("ANNOUNCE", StringComparison.OrdinalIgnoreCase)) return RequestType.ANNOUNCE;
+            if (method.Equals("FLUSH", StringComparison.OrdinalIgnoreCase)) return RequestType.FLUSH;
+            if (method.Equals("TEARDOWN", StringComparison.OrdinalIgnoreCase)) return RequestType.TEARDOWN;
+            if (method.Equals("PAUSE", StringComparison.OrdinalIgnoreCase)) return RequestType.PAUSE;
+            if (method.Equals("SETPEERS", StringComparison.OrdinalIgnoreCase)) return RequestType.SETPEERS;
             return null;
         }
 
-        private string ResolvePath(string hex)
+        private string ResolvePath(string line)
         {
-            var r = new Regex("20(.*)20");
-            var m = r.Match(hex);
-            if (m.Success)
-            {
-                var pathHex = m.Groups[1].Value;
-                var pathBytes = HexToBytes(pathHex);
-                return Encoding.ASCII.GetString(pathBytes);
-            }
-            return null;
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length >= 2 ? parts[1] : null;
         }
 
-        private ProtocolType? ResolveProtocol(string hex)
+        private ProtocolType? ResolveProtocol(string line)
         {
-            if (hex.EndsWith(ProtocolConst.HTTP10, StringComparison.OrdinalIgnoreCase)) return ProtocolType.HTTP10;
-            if (hex.EndsWith(ProtocolConst.HTTP11, StringComparison.OrdinalIgnoreCase)) return ProtocolType.HTTP11;
-            if (hex.EndsWith(ProtocolConst.RTSP10, StringComparison.OrdinalIgnoreCase)) return ProtocolType.RTSP10;
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var protocol = parts.Length >= 3 ? parts[2] : null;
+            if (protocol == null) return null;
+            if (protocol.Equals("HTTP/1.0", StringComparison.OrdinalIgnoreCase)) return ProtocolType.HTTP10;
+            if (protocol.Equals("HTTP/1.1", StringComparison.OrdinalIgnoreCase)) return ProtocolType.HTTP11;
+            if (protocol.Equals("RTSP/1.0", StringComparison.OrdinalIgnoreCase)) return ProtocolType.RTSP10;
             return null;
         }
 
@@ -159,9 +172,22 @@ namespace AirPlayer.Protocol.Models
             return response;
         }
 
-        private Header ResolveHeader(string hex)
+        private Header ResolveHeader(string line)
         {
-            return new Header(hex);
+            return Header.FromPlain(line);
+        }
+
+        private static int FindHeaderLength(byte[] data)
+        {
+            for (var i = 0; i <= data.Length - 4; i++)
+            {
+                if (data[i] == '\r' && data[i + 1] == '\n' && data[i + 2] == '\r' && data[i + 3] == '\n')
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
 
         private static byte[] HexToBytes(string hex)

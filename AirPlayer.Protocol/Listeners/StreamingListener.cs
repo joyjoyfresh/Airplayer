@@ -113,9 +113,7 @@ namespace AirPlayer.Protocol.Listeners
 
                         var aesCtr128Encrypt = Utilities.InitializeChiper(session.EcdhShared);
 
-                        var signatureBuffer = new byte[64];
-                        signatureBuffer = aesCtr128Encrypt.ProcessBytes(signatureBuffer);
-                        signatureBuffer = aesCtr128Encrypt.DoFinal(signature);
+                        var signatureBuffer = aesCtr128Encrypt.DoFinal(signature);
 
                         byte[] messageBuffer = new byte[64];
                         Array.Copy(session.EcdhTheirs, 0, messageBuffer, 0, 32);

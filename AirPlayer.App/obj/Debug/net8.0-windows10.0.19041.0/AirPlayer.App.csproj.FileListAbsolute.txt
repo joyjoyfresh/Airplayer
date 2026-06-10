@@ -1,0 +1,1 @@
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\Debug\net8.0-windows10.0.19041.0\AirPlayer.App.csproj.AssemblyReference.cache

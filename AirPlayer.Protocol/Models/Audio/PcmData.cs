@@ -6,5 +6,6 @@ namespace AirPlayer.Protocol.Models.Audio
     {
         public byte[] Data { get; set; }
         public int Length { get; set; }
+        public ulong Pts { get; set; }
     }
 }

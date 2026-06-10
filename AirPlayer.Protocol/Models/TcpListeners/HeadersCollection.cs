@@ -18,11 +18,7 @@ namespace AirPlayer.Protocol.Models
 
         public void Add(string name, string value)
         {
-            _headers[name] = new Header($"{name}: {value}")
-            {
-                Name = name,
-                Values = new List<string> { value }
-            };
+            _headers[name] = new Header(name, value);
         }
 
         public bool ContainsKey(string name)

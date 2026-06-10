@@ -13,23 +13,32 @@ namespace AirPlayer.Protocol.Models
         public string Name { get; set; }
         public List<string> Values { get; set; }
 
-        public Header(string hex)
+        public Header(string name, string value)
         {
+            Name = name?.Trim();
             Values = new List<string>();
+            if (value != null)
+            {
+                Values.Add(value.Trim());
+            }
+        }
 
+        public static Header FromHex(string hex)
+        {
             var bytes = HexToBytes(hex);
             var raw = Encoding.ASCII.GetString(bytes);
+            return FromPlain(raw);
+        }
 
+        public static Header FromPlain(string raw)
+        {
             var split = raw.Split(':', 2);
-            if (split.Length == 2)
+            if (split.Length != 2)
             {
-                Name = split[0].Trim();
-                var vals = split[1].Split(',');
-                foreach (var v in vals)
-                {
-                    Values.Add(v.Trim());
-                }
+                return new Header(raw.Trim(), string.Empty);
             }
+
+            return new Header(split[0], split[1]);
         }
 
         private static byte[] HexToBytes(string hex)

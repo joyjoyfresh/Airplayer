@@ -1,5 +1,6 @@
 using System;
 using AirPlayer.Protocol.Models;
+using AirPlayer.Protocol.Models.Audio;
 
 namespace AirPlayer.Protocol
 {
@@ -10,7 +11,7 @@ namespace AirPlayer.Protocol
     {
         void OnSetVolume(decimal volume);
         void OnData(H264Data data);
-        void OnPCMData(byte[] pcmData);
+        void OnPCMData(PcmData pcmData);
         void OnAudioFlush();
         void OnMirroringStarted();
         void OnMirroringStopped();

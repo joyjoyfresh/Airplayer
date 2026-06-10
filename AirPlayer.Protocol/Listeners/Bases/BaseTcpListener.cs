@@ -20,22 +20,37 @@ namespace AirPlayer.Protocol.Listeners
     public class BaseTcpListener : BaseListener
     {
         private readonly ushort _port;
-        private readonly TcpListener _listener;
+        private TcpListener _listener;
         private readonly ConcurrentDictionary<string, Task> _connections;
         private readonly bool _rawData;
         private readonly CancellationTokenSource _cancellationTokenSource;
+
+        public int LocalPort => _listener.LocalEndpoint != null ? ((IPEndPoint)_listener.LocalEndpoint).Port : _port;
 
         public BaseTcpListener(ushort port, bool rawData = false)
         {
             _port = port;
             _rawData = rawData;
-            _listener = new TcpListener(IPAddress.Any, _port);
+            _listener = TcpListener.Create(_port);
             _connections = new ConcurrentDictionary<string, Task>();
             _cancellationTokenSource = new CancellationTokenSource();
         }
 
         public override Task StartAsync(CancellationToken cancellationToken)
         {
+            try
+            {
+                _listener.Start();
+                Console.WriteLine($"[DEBUG-TCP] Listening on port {LocalPort}");
+            }
+            catch (SocketException ex)
+            {
+                Console.WriteLine($"[DEBUG-TCP] Port {_port} unavailable ({ex.SocketErrorCode}), fallback to dynamic port");
+                _listener = TcpListener.Create(0);
+                _listener.Start();
+                Console.WriteLine($"[DEBUG-TCP] Listening on fallback port {LocalPort}");
+            }
+
             var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _cancellationTokenSource.Token);
             Task.Run(() => AcceptClientsAsync(source.Token), source.Token);
             return Task.CompletedTask;
@@ -60,7 +75,6 @@ namespace AirPlayer.Protocol.Listeners
 
         private async Task AcceptClientsAsync(CancellationToken cancellationToken)
         {
-            _listener.Start();
             try
             {
                 while (!cancellationToken.IsCancellationRequested)
@@ -109,82 +123,119 @@ namespace AirPlayer.Protocol.Listeners
 
         private async Task ReadFormattedAsync(TcpClient client, NetworkStream stream, CancellationToken cancellationToken)
         {
-            if (client.Connected && stream.CanRead)
+            while (client.Connected && stream.CanRead && !cancellationToken.IsCancellationRequested)
             {
-                int retBytes = 0;
-                string raw = string.Empty;
-
-                do
+                Request request;
+                try
                 {
-                    try
-                    {
-                        var buffer = new byte[1024];
-                        var readCount = stream.Read(buffer, 0, buffer.Length);
-                        retBytes += readCount;
-                        raw += string.Join(string.Empty, buffer.Take(readCount).Select(b => b.ToString("X2")));
-                        await Task.Delay(10);
-                    }
-                    catch (IOException) { }
-                } while (client.Connected && stream.DataAvailable);
-
-                if (client.Connected)
+                    request = await ReadRequestAsync(stream, cancellationToken).ConfigureAwait(false);
+                }
+                catch (EndOfStreamException)
                 {
-                    var pattern =
-                        $"^{RequestConst.GET}[.]*|" +
-                        $"^{RequestConst.POST}[.]*|" +
-                        $"^{RequestConst.SETUP}[.]*|" +
-                        $"^{RequestConst.GET_PARAMETER}[.]*|" +
-                        $"^{RequestConst.RECORD}[.]*|" +
-                        $"^{RequestConst.SET_PARAMETER}[.]*|" +
-                        $"^{RequestConst.OPTIONS}[.]*|" +
-                        $"^{RequestConst.ANNOUNCE}[.]*|" +
-                        $"^{RequestConst.FLUSH}[.]*|" +
-                        $"^{RequestConst.PAUSE}[.]*|" +
-                        $"^{RequestConst.SETPEERS}[.]*|" +
-                        $"^{RequestConst.TEARDOWN}[.]*";
-
-                    var r = new Regex(pattern, RegexOptions.Multiline);
-                    var m = r.Matches(raw);
-
-                    if (m.Count == 0 && raw.Length > 0)
-                    {
-                        var preview = raw.Length > 200 ? raw.Substring(0, 200) : raw;
-                        Console.WriteLine($"[DEBUG-RTSP] Unrecognized data, len={raw.Length}, preview: {preview}");
-                    }
-
-                    var requests = new List<Request>();
-                    for (int i = 0; i < m.Count; i++)
-                    {
-                        if (i + 1 < m.Count)
-                        {
-                            var hexReq = raw.Substring(m[i].Index, m[i + 1].Index - m[i].Index);
-                            requests.Add(new Request(hexReq));
-                        }
-                        else
-                        {
-                            var hexReq = raw.Substring(m[i].Index);
-                            requests.Add(new Request(hexReq));
-                        }
-                    }
-
-                    foreach (var request in requests)
-                    {
-                        var response = request.GetBaseResponse();
-                        var cseq = request.Headers.ContainsKey("CSeq") ? request.Headers["CSeq"] : "?";
-                        Console.WriteLine($"[DEBUG-RTSP] >>> {request.Type} CSeq={cseq}");
-
-                        await OnDataReceivedAsync(request, response, cancellationToken).ConfigureAwait(false);
-                        await SendResponseAsync(stream, response);
-
-                        Console.WriteLine($"[DEBUG-RTSP] <<< {response.StatusCode}");
-                    }
+                    break;
+                }
+                catch (IOException)
+                {
+                    break;
                 }
 
-                if (retBytes != 0)
+                if (request == null)
                 {
-                    await ReadFormattedAsync(client, stream, cancellationToken);
+                    break;
+                }
+
+                if (!request.IsValid)
+                {
+                    Console.WriteLine("[DEBUG-RTSP] Invalid request received");
+                    break;
+                }
+
+                var response = request.GetBaseResponse();
+                var cseq = request.Headers.ContainsKey("CSeq") ? request.Headers["CSeq"] : "?";
+                Console.WriteLine($"[DEBUG-RTSP] >>> {request.Type} {request.Path} CSeq={cseq} Body={request.Body.Length}");
+
+                await OnDataReceivedAsync(request, response, cancellationToken).ConfigureAwait(false);
+                await SendResponseAsync(stream, response).ConfigureAwait(false);
+
+                Console.WriteLine($"[DEBUG-RTSP] <<< {response.StatusCode}");
+            }
+        }
+
+        private async Task<Request> ReadRequestAsync(NetworkStream stream, CancellationToken cancellationToken)
+        {
+            var headerBytes = await ReadUntilHeaderEndAsync(stream, cancellationToken).ConfigureAwait(false);
+            if (headerBytes == null || headerBytes.Length == 0)
+            {
+                return null;
+            }
+
+            var headerText = Encoding.ASCII.GetString(headerBytes);
+            var contentLength = GetContentLength(headerText);
+            var bodyBytes = contentLength > 0
+                ? await ReadExactAsync(stream, contentLength, cancellationToken).ConfigureAwait(false)
+                : Array.Empty<byte>();
+            var requestBytes = headerBytes.Concat(Encoding.ASCII.GetBytes("\r\n\r\n")).Concat(bodyBytes).ToArray();
+            return new Request(requestBytes);
+        }
+
+        private static async Task<byte[]> ReadUntilHeaderEndAsync(NetworkStream stream, CancellationToken cancellationToken)
+        {
+            var buffer = new List<byte>();
+            var one = new byte[1];
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var read = await stream.ReadAsync(one, 0, 1, cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    if (buffer.Count == 0)
+                    {
+                        return null;
+                    }
+                    throw new EndOfStreamException();
+                }
+
+                buffer.Add(one[0]);
+                var count = buffer.Count;
+                if (count >= 4 && buffer[count - 4] == '\r' && buffer[count - 3] == '\n' && buffer[count - 2] == '\r' && buffer[count - 1] == '\n')
+                {
+                    return buffer.Take(count - 4).ToArray();
                 }
             }
+
+            return null;
+        }
+
+        private static async Task<byte[]> ReadExactAsync(NetworkStream stream, int length, CancellationToken cancellationToken)
+        {
+            var buffer = new byte[length];
+            var offset = 0;
+            while (offset < length)
+            {
+                var read = await stream.ReadAsync(buffer, offset, length - offset, cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    throw new EndOfStreamException();
+                }
+                offset += read;
+            }
+            return buffer;
+        }
+
+        private static int GetContentLength(string headerText)
+        {
+            var lines = headerText.Split(new[] { "\r\n" }, StringSplitOptions.None);
+            foreach (var line in lines)
+            {
+                var parts = line.Split(':', 2);
+                if (parts.Length == 2 && parts[0].Trim().Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(parts[1].Trim(), out var value))
+                    {
+                        return value;
+                    }
+                }
+            }
+            return 0;
         }
 
         private async Task SendResponseAsync(NetworkStream stream, Response response)

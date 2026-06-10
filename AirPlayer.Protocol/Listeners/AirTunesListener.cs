@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -23,6 +23,8 @@ namespace AirPlayer.Protocol.Listeners
         private readonly IRtspReceiver _receiver;
         private readonly ushort _airTunesPort;
         private readonly ushort _airPlayPort;
+        private readonly string _instance;
+        private readonly string _deviceId;
         private readonly byte[] _publicKey;
         private readonly byte[] _expandedPrivateKey;
         private readonly byte[] _fpHeader = new byte[] { 0x46, 0x50, 0x4c, 0x59, 0x03, 0x01, 0x04, 0x00, 0x00, 0x00, 0x00, 0x14 };
@@ -35,17 +37,23 @@ namespace AirPlayer.Protocol.Listeners
         };
         private readonly DumpConfig _dumpConfig;
 
-        public AirTunesListener(IRtspReceiver receiver, ushort port, ushort airPlayPort, DumpConfig dumpConfig) : base(port)
+        public string PublicKeyHex => BitConverter.ToString(_publicKey).Replace("-", string.Empty).ToLowerInvariant();
+
+        public AirTunesListener(IRtspReceiver receiver, ushort port, ushort airPlayPort, DumpConfig dumpConfig, string instance = "airserver", string deviceId = "11:22:33:44:55:66", byte[] seed = null) : base(port)
         {
             _airTunesPort = port;
             _airPlayPort = airPlayPort;
+            _instance = instance;
+            _deviceId = deviceId;
             _receiver = receiver ?? throw new ArgumentNullException(nameof(receiver));
             _dumpConfig = dumpConfig ?? throw new ArgumentNullException(nameof(dumpConfig));
 
-            // First time that we instantiate AirPlayListener we must create a ED25519 KeyPair
-            // var seed = new byte[32];
-            // RNGCryptoServiceProvider.Create().GetBytes(seed);
-            var seed = Enumerable.Range(0, 32).Select(r => (byte)r).ToArray();
+            // 用外部传入的随机种子生成 ED25519 密钥对；未提供时兜底随机生成，避免再用固定种子
+            if (seed == null || seed.Length != 32)
+            {
+                seed = new byte[32];
+                System.Security.Cryptography.RandomNumberGenerator.Fill(seed);
+            }
             Chaos.NaCl.Ed25519.KeyPairFromSeed(out byte[] publicKey, out byte[] expandedPrivateKey, seed);
 
             _publicKey = publicKey;
@@ -54,15 +62,28 @@ namespace AirPlayer.Protocol.Listeners
 
         public override async Task OnDataReceivedAsync(Request request, Response response, CancellationToken cancellationToken)
         {
-            // Get session by active-remote header value
+            // 优先使用 Active-Remote 作为会话键，缺失时使用默认会话避免探测请求崩溃
             var sessionId = request.Headers["Active-Remote"];
+            if (string.IsNullOrWhiteSpace(sessionId))
+            {
+                sessionId = "default";
+            }
             var session = await SessionManager.Current.GetSessionAsync(sessionId);
 
+            if (request.Type == RequestType.POST &&
+                ("/pair-pin-start".Equals(request.Path, StringComparison.OrdinalIgnoreCase) ||
+                 "/pair-setup-pin".Equals(request.Path, StringComparison.OrdinalIgnoreCase)))
+            {
+                // 当前接收端不启用屏幕代码配对，避免 iOS 进入验证码流程
+                Console.WriteLine($"[DEBUG-PAIR] Reject unsupported PIN pairing endpoint: {request.Path}");
+                response.StatusCode = StatusCode.NOTFOUND;
+            }
             if (request.Type == RequestType.GET && "/info".Equals(request.Path, StringComparison.OrdinalIgnoreCase))
             {
+                var publicKeyHex = PublicKeyHex;
                 var dict = new Dictionary<string, object>();
-                dict.Add("features", 61379444727);
-                dict.Add("name", "airserver");
+                dict.Add("features", 130367356919L); // 0x5A7FFFF7,0x1E，必须与 mDNS 广播的 features 完全一致，否则 iOS 会改走验证码配对
+                dict.Add("name", _instance);
                 dict.Add("displays", new List<Dictionary<string, object>>
                 {
                     new Dictionary<string, object>
@@ -98,11 +119,13 @@ namespace AirPlayer.Protocol.Listeners
                 });
                 dict.Add("vv", 2);
                 dict.Add("statusFlags", 4);
+                dict.Add("passwordRequired", false);
+                dict.Add("pinRequired", false);
                 dict.Add("keepAliveLowPower", true);
                 dict.Add("sourceVersion", "220.68");
-                dict.Add("pk", "29fbb183a58b466e05b9ab667b3c429d18a6b785637333d3f0f3a34baa89f45c");
+                dict.Add("pk", publicKeyHex);
                 dict.Add("keepAliveSendStatsAsBody", true);
-                dict.Add("deviceID", "78:7B:8A:BD:C9:4D");
+                dict.Add("deviceID", _deviceId);
                 dict.Add("model", "AppleTV5,3");
                 dict.Add("audioLatencies", new List<Dictionary<string, object>>
                 {
@@ -123,7 +146,7 @@ namespace AirPlayer.Protocol.Listeners
                         }
                     }
                 });
-                dict.Add("macAddress", "78:7B:8A:BD:C9:4D");
+                dict.Add("macAddress", _deviceId);
 
                 var output = default(byte[]);
                 using (var outputStream = new MemoryStream())
@@ -174,6 +197,7 @@ namespace AirPlayer.Protocol.Listeners
                         session.EcdhShared = curve25519.calculateAgreement(ecdhPrivateKey, session.EcdhTheirs);
 
                         var aesCtr128Encrypt = Utilities.InitializeChiper(session.EcdhShared);
+                        session.VerifyCipher = aesCtr128Encrypt; // 保存 cipher，M2 需接续同一条 CTR 密钥流
 
                         byte[] dataToSign = new byte[64];
                         Array.Copy(session.EcdhOurs, 0, dataToSign, 0, 32);
@@ -181,7 +205,7 @@ namespace AirPlayer.Protocol.Listeners
 
                         var signature = Chaos.NaCl.Ed25519.Sign(dataToSign, _expandedPrivateKey);
 
-                        byte[] encryptedSignature = aesCtr128Encrypt.DoFinal(signature);
+                        byte[] encryptedSignature = aesCtr128Encrypt.ProcessBytes(signature); // 用 ProcessBytes，避免 DoFinal 把计数器重置回 0
 
                         byte[] output = new byte[session.EcdhOurs.Length + encryptedSignature.Length];
                         Array.Copy(session.EcdhOurs, 0, output, 0, session.EcdhOurs.Length);
@@ -195,11 +219,10 @@ namespace AirPlayer.Protocol.Listeners
                         reader.ReadBytes(3);
                         var signature = reader.ReadBytes(64);
 
-                        var aesCtr128Encrypt = Utilities.InitializeChiper(session.EcdhShared);
+                        // 复用 M1 的 cipher，让 CTR 计数器从块 4 继续；缺失时兜底重建（兼容异常情况）
+                        var aesCtr128Encrypt = session.VerifyCipher ?? Utilities.InitializeChiper(session.EcdhShared);
 
-                        var signatureBuffer = new byte[64];
-                        signatureBuffer = aesCtr128Encrypt.ProcessBytes(signatureBuffer);
-                        signatureBuffer = aesCtr128Encrypt.DoFinal(signature);
+                        var signatureBuffer = aesCtr128Encrypt.ProcessBytes(signature);
 
                         byte[] messageBuffer = new byte[64];
                         Array.Copy(session.EcdhTheirs, 0, messageBuffer, 0, 32);
@@ -307,7 +330,16 @@ namespace AirPlayer.Protocol.Listeners
                             {
                                 session.StreamConnectionId = unchecked((ulong)(System.Int64)stream["streamConnectionID"]).ToString();
 
-                                // Set video data port
+                                // 先启动镜像数据监听器，再把实际绑定端口返回给 iOS
+                                if (session.MirroringListener == null)
+                                {
+                                    var mirroring = new MirroringListener(_receiver, session.SessionId, _airPlayPort);
+                                    await mirroring.StartAsync(cancellationToken).ConfigureAwait(false);
+                                    session.MirroringListener = mirroring;
+                                    _receiver.OnMirroringStarted();
+                                    Console.WriteLine($"[DEBUG-SETUP] MirroringListener started on port {mirroring.LocalPort}");
+                                }
+
                                 var streams = new Dictionary<string, List<Dictionary<string, int>>>()
                                 {
                                     {
@@ -318,7 +350,7 @@ namespace AirPlayer.Protocol.Listeners
                                                 new Dictionary<string, int>
                                                 {
                                                     { "type", 110 },
-                                                    { "dataPort", _airPlayPort }
+                                                    { "dataPort", session.MirroringListener.LocalPort }
                                                 }
                                             }
                                         }
@@ -374,8 +406,8 @@ namespace AirPlayer.Protocol.Listeners
                                                 new Dictionary<string, int>
                                                 {
                                                     { "type", 96 },
-                                                    { "controlPort", 7002 },
-                                                    { "dataPort", 7003 }
+                                                    { "controlPort", 7022 },
+                                                    { "dataPort", 7023 }
                                                 }
                                             }
                                         }
@@ -445,7 +477,7 @@ namespace AirPlayer.Protocol.Listeners
 
                         if (session.FairPlayReady && session.MirroringSessionReady && session.MirroringListener == null)
                         {
-                            // Start 'MirroringListener' (handle H264 data received from iOS/macOS
+                            // 镜像监听器通常已在 stream SETUP 阶段启动；这里保留兜底启动逻辑
                             var mirroring = new MirroringListener(_receiver, session.SessionId, _airPlayPort);
                             await mirroring.StartAsync(cancellationToken).ConfigureAwait(false);
 
@@ -475,7 +507,7 @@ namespace AirPlayer.Protocol.Listeners
                             Console.WriteLine($"[DEBUG-SETUP] Creating new AudioListener: format={session.AudioFormat}, ct={session.AudioCompressionType}, spf={session.AudioSamplesPerFrame}, mirroring={session.MirroringSession}");
                             // Start 'AudioListener' (handle PCM/AAC/ALAC data received from iOS/macOS
                             bool isMirroring = session.MirroringSession.HasValue && session.MirroringSession.Value;
-                            var control = new AudioListener(_receiver, session.SessionId, 7002, 7003, _dumpConfig, isMirroring);
+                            var control = new AudioListener(_receiver, session.SessionId, 7022, 7023, _dumpConfig, isMirroring);
                             await control.StartAsync(cancellationToken).ConfigureAwait(false);
                             Console.WriteLine("[DEBUG-SETUP] AudioListener started successfully");
 
