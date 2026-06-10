@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AirPlayer.Protocol")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+38828911ac2d9967955e30415f06cccfe2979ee4")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e7aed835979e4810f1b4d59f9d13bfb0005719f1")]
 [assembly: System.Reflection.AssemblyProductAttribute("AirPlayer.Protocol")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AirPlayer.Protocol")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

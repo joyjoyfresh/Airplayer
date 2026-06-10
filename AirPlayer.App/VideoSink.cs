@@ -35,6 +35,12 @@ namespace AirPlayer.App
         // 第一帧的 PTS，用于把绝对时间戳归零（否则播放器时间轴会一直等到那个绝对时刻导致黑屏）
         private long? _basePts;
 
+        // 上一帧的相对时间（微秒），用于按真实间隔估算每帧时长
+        private long _lastRelUs = -1;
+
+        // 呈现缓冲（微秒）：把时间戳整体后移，吸收网络+解码延迟，避免帧被判为迟到而丢弃导致冻结
+        private const long PresentationCushionUs = 250000;
+
         // 诊断计数
         private int _enqueueCount;
         private int _sampleServedCount;
@@ -112,12 +118,18 @@ namespace AirPlayer.App
 
             // 将 byte 数组转为 Windows 运行时 IBuffer
             var buffer = frame.Data.AsBuffer();
-            // 微秒转 100 纳秒 Ticks（1us = 10 ticks）
-            var timestamp = TimeSpan.FromTicks(relativeUs * 10);
+            // 时间戳 = 归零后的相对时间 + 呈现缓冲；微秒转 100 纳秒 Ticks（1us = 10 ticks）
+            var timestamp = TimeSpan.FromTicks((relativeUs + PresentationCushionUs) * 10);
             // 创建样本
             var sample = MediaStreamSample.CreateFromBuffer(buffer, timestamp);
-            // 估算每帧持续时间约 16 毫秒（约 60fps）
-            sample.Duration = TimeSpan.FromMilliseconds(16);
+
+            // 每帧时长按与上一帧的真实间隔估算，避免固定 16ms 与实际帧率不符导致时间轴错乱
+            long durUs = (_lastRelUs >= 0) ? (relativeUs - _lastRelUs) : 33000;
+            if (durUs < 1000) durUs = 1000;        // 下限 1ms
+            if (durUs > 200000) durUs = 200000;    // 上限 200ms
+            sample.Duration = TimeSpan.FromTicks(durUs * 10);
+            _lastRelUs = relativeUs;
+
             // I 帧标记为关键帧
             if (frame.FrameType == 5)
             {
@@ -225,6 +237,8 @@ namespace AirPlayer.App
                 _frameQueue.Clear();
                 // 重置基准 PTS，下一次连接重新归零
                 _basePts = null;
+                // 重置帧间隔基准
+                _lastRelUs = -1;
                 // 重置关键帧标志
                 _gotKeyframe = false;
                 // 强行关闭挂起的请求以防泄露
