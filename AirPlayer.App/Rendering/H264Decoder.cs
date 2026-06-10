@@ -45,8 +45,9 @@ namespace AirPlayer.App.Rendering
         {
             if (_started) return;
 
-            // 通过 CLSID 创建系统 H264 解码器 MFT
-            _decoder = ComObject.As<IMFTransform>(CreateComObject(CLSID_CMSH264DecoderMFT));
+            // 通过 CLSID 创建系统 H264 解码器 MFT（显式 QueryInterface 到 IMFTransform）
+            _decoder = CreateDecoder(CLSID_CMSH264DecoderMFT);
+            DiagLog.Write("[DEC] MFT 实例已创建");
 
             // 配置输入类型：H264
             var inType = MediaFactory.MFCreateMediaType();
@@ -54,12 +55,15 @@ namespace AirPlayer.App.Rendering
             inType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
             inType.Set(MediaTypeAttributeKeys.FrameSize, PackLong(width, height));
             _decoder!.SetInputType(0, inType, 0);
+            DiagLog.Write("[DEC] 输入类型已设置");
 
-            // 配置输出类型：NV12
+            // 配置输出类型：NV12（必须带帧尺寸，否则部分解码器报 MF_E_ATTRIBUTENOTFOUND）
             var outType = MediaFactory.MFCreateMediaType();
             outType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
             outType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
+            outType.Set(MediaTypeAttributeKeys.FrameSize, PackLong(width, height));
             _decoder.SetOutputType(0, outType, 0);
+            DiagLog.Write("[DEC] 输出类型已设置");
 
             // 开始流（第二参为 nuint）
             _decoder.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, UIntPtr.Zero);
@@ -155,6 +159,7 @@ namespace AirPlayer.App.Rendering
             var newOut = MediaFactory.MFCreateMediaType();
             newOut.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
             newOut.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
+            newOut.Set(MediaTypeAttributeKeys.FrameSize, PackLong(_width, _height));
             _decoder!.SetOutputType(0, newOut, 0);
             DiagLog.Write("[DEC] 输出格式变化，已重设 NV12 输出类型");
         }
@@ -166,7 +171,7 @@ namespace AirPlayer.App.Rendering
             height = _height;
 
             using var buffer = sample.ConvertToContiguousBuffer();
-            IntPtr data = buffer.Lock(out int _, out int curLen);
+            buffer.Lock(out IntPtr data, out int _, out int curLen);
             try
             {
                 if (_nv12Buffer == null || _nv12Buffer.Length < curLen)
@@ -231,7 +236,7 @@ namespace AirPlayer.App.Rendering
         private static IMFSample CreateSampleFromBytes(byte[] data)
         {
             var buffer = MediaFactory.MFCreateMemoryBuffer(data.Length);
-            IntPtr ptr = buffer.Lock(out int _, out int _);
+            buffer.Lock(out IntPtr ptr, out int _, out int _);
             Marshal.Copy(data, 0, ptr, data.Length);
             buffer.Unlock();
             buffer.CurrentLength = data.Length;
@@ -242,13 +247,26 @@ namespace AirPlayer.App.Rendering
             return sample;
         }
 
-        /// <summary>通过 CLSID 创建未托管 COM 对象并返回其 ComObject 包装</summary>
-        private static ComObject CreateComObject(Guid clsid)
+        /// <summary>通过 CLSID 创建 MFT，并显式 QueryInterface 到 IMFTransform</summary>
+        private static IMFTransform CreateDecoder(Guid clsid)
         {
+            // IID_IMFTransform
+            Guid iidTransform = new Guid("BF94C121-5B05-4E6F-8000-BA598961414D");
+
             Type t = Type.GetTypeFromCLSID(clsid, throwOnError: true)!;
-            object obj = Activator.CreateInstance(t)!;
-            IntPtr unk = Marshal.GetIUnknownForObject(obj);
-            return new ComObject(unk);
+            object obj = Activator.CreateInstance(t)!;          // 创建 MFT 的 RCW
+            IntPtr unk = Marshal.GetIUnknownForObject(obj);     // 取 IUnknown*
+            try
+            {
+                int hr = Marshal.QueryInterface(unk, ref iidTransform, out IntPtr ppv);
+                if (hr < 0)
+                    throw new InvalidOperationException($"QueryInterface(IMFTransform) 失败: 0x{hr:X8}");
+                return new IMFTransform(ppv); // 用 QI 得到的指针构造 Vortice 包装
+            }
+            finally
+            {
+                Marshal.Release(unk);
+            }
         }
 
         public void Dispose()

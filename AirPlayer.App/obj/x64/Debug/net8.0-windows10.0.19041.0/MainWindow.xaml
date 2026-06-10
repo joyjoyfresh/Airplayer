@@ -1,0 +1,119 @@
+﻿<Window
+    x:Class="AirPlayer.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:AirPlayer.App"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
+    mc:Ignorable="d"
+    Title="AirPlayer Receiver">
+
+    <!-- 主网格，带有极具质感的深色背景 -->
+    <Grid x:ConnectionId='2' x:Name="MainGrid" Background="#090811">
+        <Grid.Resources>
+            <!-- 等待连接界面的极简脉动呼吸光晕动画 -->
+            <Storyboard x:ConnectionId='3' x:Name="PulseStoryboard" RepeatBehavior="Forever">
+                <!-- 渐变阴影的透明度渐变 -->
+                <DoubleAnimation
+                    Storyboard.TargetName="PulseGlow"
+                    Storyboard.TargetProperty="Opacity"
+                    From="0.15" To="0.45" Duration="0:0:3"
+                    AutoReverse="True"/>
+                <!-- 水平缩放动画 -->
+                <DoubleAnimation
+                    Storyboard.TargetName="GlowScaleTransform"
+                    Storyboard.TargetProperty="ScaleX"
+                    From="0.9" To="1.1" Duration="0:0:3"
+                    AutoReverse="True"/>
+                <!-- 垂直缩放动画 -->
+                <DoubleAnimation
+                    Storyboard.TargetName="GlowScaleTransform"
+                    Storyboard.TargetProperty="ScaleY"
+                    From="0.9" To="1.1" Duration="0:0:3"
+                    AutoReverse="True"/>
+            </Storyboard>
+        </Grid.Resources>
+        
+        <!-- 视频显示容器（Win2D SwapChain），投屏开启时显示 -->
+        <canvas:CanvasSwapChainPanel x:ConnectionId='4'
+            x:Name="SwapPanel"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Stretch"
+            Visibility="Collapsed"/>
+
+        <!-- 极简高端配对引导层，在无投屏信号时显示 -->
+        <Grid x:ConnectionId='5' x:Name="PromoGrid" Visibility="Visible">
+            
+            <!-- 紫色呼吸光晕径向渐变，提升纯黑屏单调感 -->
+            <Ellipse x:ConnectionId='7' x:Name="PulseGlow" Width="600" Height="600" Opacity="0.2" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Ellipse.Fill>
+                    <RadialGradientBrush>
+                        <!-- 中心高亮紫色 -->
+                        <GradientStop Color="#7C4DFF" Offset="0"/>
+                        <!-- 边缘完全透明 -->
+                        <GradientStop Color="#007C4DFF" Offset="1"/>
+                    </RadialGradientBrush>
+                </Ellipse.Fill>
+                <!-- 动画中心原点缩放 -->
+                <Ellipse.RenderTransform>
+                    <ScaleTransform x:ConnectionId='11' x:Name="GlowScaleTransform" CenterX="300" CenterY="300" ScaleX="1" ScaleY="1"/>
+                </Ellipse.RenderTransform>
+            </Ellipse>
+
+            <!-- 垂直布局元素 -->
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="25">
+                
+                <!-- AirPlay 无线投屏图标，使用 Segoe MDL2 字体中的图标 -->
+                <FontIcon Glyph="&#xEC15;" FontSize="72" Foreground="#8C66FF" HorizontalAlignment="Center"/>
+                
+                <!-- 主状态文案 -->
+                <TextBlock x:ConnectionId='8' 
+                    x:Name="StatusTitle" 
+                    Text="准备就绪" 
+                    FontSize="28" 
+                    FontWeight="Bold" 
+                    Foreground="White" 
+                    HorizontalAlignment="Center"
+                    FontFamily="Segoe UI Variable, Segoe UI, Microsoft YaHei"/>
+
+                <!-- 副状态文案 -->
+                <TextBlock x:ConnectionId='9' 
+                    x:Name="StatusSubtitle" 
+                    Text="在 iOS 设备上拉下控制中心，点击「屏幕镜像」投屏" 
+                    FontSize="16" 
+                    Foreground="#A0A0C0" 
+                    HorizontalAlignment="Center"
+                    FontFamily="Segoe UI Variable, Segoe UI, Microsoft YaHei"/>
+
+                <!-- 磨砂边缘设备名称提示牌 -->
+                <Border Background="#1A1530" CornerRadius="12" Padding="24,14" HorizontalAlignment="Center" BorderBrush="#302550" BorderThickness="1">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="设备名称：" Foreground="#8080A0" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                        <!-- 连接设备绿字突出 -->
+                        <TextBlock x:ConnectionId='10' x:Name="DeviceNameText" Text="AirPlayer" Foreground="#00E676" FontWeight="SemiBold" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+        
+        <!-- 右上角悬浮全屏控制按钮 -->
+        <Button x:ConnectionId='6' 
+            x:Name="FullScreenButton"
+            Content="&#xE740;" 
+            FontFamily="Segoe MDL2 Assets" 
+            FontSize="16"
+            Foreground="White"
+            Background="#30000000"
+            BorderThickness="0"
+            Width="40"
+            Height="40"
+            CornerRadius="20"
+            VerticalAlignment="Top" 
+            HorizontalAlignment="Right" 
+            Margin="20"
+                                          
+            ToolTipService.ToolTip="切换全屏 (F11)"/>
+    </Grid>
+</Window>
+

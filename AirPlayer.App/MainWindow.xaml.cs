@@ -187,9 +187,10 @@ namespace AirPlayer.App
             _decoder = new H264Decoder();
             _decoder.SetFrameSize(width, height);
 
-            // 启动渲染线程
+            // 启动渲染线程（Media Foundation 要求 MTA 套间）
             _renderRunning = true;
             _renderThread = new Thread(RenderLoop) { IsBackground = true, Name = "VideoRender" };
+            _renderThread.SetApartmentState(ApartmentState.MTA);
             _renderThread.Start();
 
             _pipelineReady = true;
@@ -204,15 +205,15 @@ namespace AirPlayer.App
                 _frameSignal.Wait(200);
                 if (!_renderRunning) break;
 
-                // 一次性排空队列中的所有帧，按序解码呈现
+                // 一次性排空队列中的所有帧，按序解码呈现（H264Data 是结构体，用 bool 判空）
                 while (_renderRunning)
                 {
-                    H264Data? frame = null;
+                    H264Data frame;
                     lock (_queueLock)
                     {
-                        if (_frameQueue.Count > 0) frame = _frameQueue.Dequeue();
+                        if (_frameQueue.Count == 0) break;
+                        frame = _frameQueue.Dequeue();
                     }
-                    if (frame == null) break;
 
                     try
                     {
