@@ -1,0 +1,5 @@
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.Protocol\obj\Debug\net8.0\AirPlayer.Protocol.csproj.AssemblyReference.cache
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.Protocol\obj\Debug\net8.0\AirPlayer.Protocol.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.Protocol\obj\Debug\net8.0\AirPlayer.Protocol.AssemblyInfoInputs.cache
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.Protocol\obj\Debug\net8.0\AirPlayer.Protocol.AssemblyInfo.cs
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.Protocol\obj\Debug\net8.0\AirPlayer.Protocol.csproj.CoreCompileInputs.cache

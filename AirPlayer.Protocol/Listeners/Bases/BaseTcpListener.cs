@@ -1,0 +1,219 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using AirPlayer.Protocol.Models;
+using AirPlayer.Protocol.Models.Enums;
+
+namespace AirPlayer.Protocol.Listeners
+{
+    /// <summary>
+    /// TCP 监听器基类（处理 RTSP 请求或原始二进制数据）
+    /// </summary>
+    public class BaseTcpListener : BaseListener
+    {
+        private readonly ushort _port;
+        private readonly TcpListener _listener;
+        private readonly ConcurrentDictionary<string, Task> _connections;
+        private readonly bool _rawData;
+        private readonly CancellationTokenSource _cancellationTokenSource;
+
+        public BaseTcpListener(ushort port, bool rawData = false)
+        {
+            _port = port;
+            _rawData = rawData;
+            _listener = new TcpListener(IPAddress.Any, _port);
+            _connections = new ConcurrentDictionary<string, Task>();
+            _cancellationTokenSource = new CancellationTokenSource();
+        }
+
+        public override Task StartAsync(CancellationToken cancellationToken)
+        {
+            var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _cancellationTokenSource.Token);
+            Task.Run(() => AcceptClientsAsync(source.Token), source.Token);
+            return Task.CompletedTask;
+        }
+
+        public override Task StopAsync()
+        {
+            _cancellationTokenSource.Cancel();
+            try { _listener.Stop(); } catch { }
+            return Task.CompletedTask;
+        }
+
+        public virtual Task OnDataReceivedAsync(Request request, Response response, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public virtual Task OnRawReceivedAsync(TcpClient client, NetworkStream stream, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        private async Task AcceptClientsAsync(CancellationToken cancellationToken)
+        {
+            _listener.Start();
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var client = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                    var task = HandleClientAsync(client, cancellationToken);
+                    var remoteEndpoint = client.Client.RemoteEndPoint.ToString();
+                    if (!_connections.TryAdd(remoteEndpoint, task))
+                    {
+                        client.Close();
+                    }
+                }
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
+            catch (SocketException) { }
+        }
+
+        private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var remoteEndpoint = client.Client.RemoteEndPoint.ToString();
+                var stream = client.GetStream();
+
+                if (_rawData)
+                {
+                    await OnRawReceivedAsync(client, stream, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await ReadFormattedAsync(client, stream, cancellationToken).ConfigureAwait(false);
+                }
+
+                if (client.Connected)
+                {
+                    client.Close();
+                }
+                _connections.Remove(remoteEndpoint, out _);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[BaseTcpListener] Client error: {ex.Message}");
+            }
+        }
+
+        private async Task ReadFormattedAsync(TcpClient client, NetworkStream stream, CancellationToken cancellationToken)
+        {
+            if (client.Connected && stream.CanRead)
+            {
+                int retBytes = 0;
+                string raw = string.Empty;
+
+                do
+                {
+                    try
+                    {
+                        var buffer = new byte[1024];
+                        var readCount = stream.Read(buffer, 0, buffer.Length);
+                        retBytes += readCount;
+                        raw += string.Join(string.Empty, buffer.Take(readCount).Select(b => b.ToString("X2")));
+                        await Task.Delay(10);
+                    }
+                    catch (IOException) { }
+                } while (client.Connected && stream.DataAvailable);
+
+                if (client.Connected)
+                {
+                    var pattern =
+                        $"^{RequestConst.GET}[.]*|" +
+                        $"^{RequestConst.POST}[.]*|" +
+                        $"^{RequestConst.SETUP}[.]*|" +
+                        $"^{RequestConst.GET_PARAMETER}[.]*|" +
+                        $"^{RequestConst.RECORD}[.]*|" +
+                        $"^{RequestConst.SET_PARAMETER}[.]*|" +
+                        $"^{RequestConst.OPTIONS}[.]*|" +
+                        $"^{RequestConst.ANNOUNCE}[.]*|" +
+                        $"^{RequestConst.FLUSH}[.]*|" +
+                        $"^{RequestConst.PAUSE}[.]*|" +
+                        $"^{RequestConst.SETPEERS}[.]*|" +
+                        $"^{RequestConst.TEARDOWN}[.]*";
+
+                    var r = new Regex(pattern, RegexOptions.Multiline);
+                    var m = r.Matches(raw);
+
+                    if (m.Count == 0 && raw.Length > 0)
+                    {
+                        var preview = raw.Length > 200 ? raw.Substring(0, 200) : raw;
+                        Console.WriteLine($"[DEBUG-RTSP] Unrecognized data, len={raw.Length}, preview: {preview}");
+                    }
+
+                    var requests = new List<Request>();
+                    for (int i = 0; i < m.Count; i++)
+                    {
+                        if (i + 1 < m.Count)
+                        {
+                            var hexReq = raw.Substring(m[i].Index, m[i + 1].Index - m[i].Index);
+                            requests.Add(new Request(hexReq));
+                        }
+                        else
+                        {
+                            var hexReq = raw.Substring(m[i].Index);
+                            requests.Add(new Request(hexReq));
+                        }
+                    }
+
+                    foreach (var request in requests)
+                    {
+                        var response = request.GetBaseResponse();
+                        var cseq = request.Headers.ContainsKey("CSeq") ? request.Headers["CSeq"] : "?";
+                        Console.WriteLine($"[DEBUG-RTSP] >>> {request.Type} CSeq={cseq}");
+
+                        await OnDataReceivedAsync(request, response, cancellationToken).ConfigureAwait(false);
+                        await SendResponseAsync(stream, response);
+
+                        Console.WriteLine($"[DEBUG-RTSP] <<< {response.StatusCode}");
+                    }
+                }
+
+                if (retBytes != 0)
+                {
+                    await ReadFormattedAsync(client, stream, cancellationToken);
+                }
+            }
+        }
+
+        private async Task SendResponseAsync(NetworkStream stream, Response response)
+        {
+            var format = $"{response.GetProtocol()} {(int)response.StatusCode} {response.StatusCode.ToString().ToUpperInvariant()}\r\n";
+            foreach (var header in response.Headers.GetHeaders())
+            {
+                format += $"{header.Name}: {string.Join(",", header.Values)}\r\n";
+            }
+            format += "\r\n";
+
+            var formatBuffer = Encoding.ASCII.GetBytes(format);
+            byte[] payload;
+            var bodyBuffer = await response.ReadAsync();
+            if (bodyBuffer?.Any() == true)
+            {
+                payload = formatBuffer.Concat(bodyBuffer).ToArray();
+            }
+            else
+            {
+                payload = formatBuffer;
+            }
+
+            try
+            {
+                stream.Write(payload, 0, payload.Length);
+                stream.Flush();
+            }
+            catch (IOException) { }
+        }
+    }
+}

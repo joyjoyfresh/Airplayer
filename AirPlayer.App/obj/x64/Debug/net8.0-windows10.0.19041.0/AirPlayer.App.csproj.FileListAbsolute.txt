@@ -1,0 +1,8 @@
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\x64\Debug\net8.0-windows10.0.19041.0\AirPlayer.App.csproj.AssemblyReference.cache
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\x64\Debug\net8.0-windows10.0.19041.0\App.g.i.cs
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\x64\Debug\net8.0-windows10.0.19041.0\App.g.cs
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\x64\Debug\net8.0-windows10.0.19041.0\XamlTypeInfo.g.cs
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\x64\Debug\net8.0-windows10.0.19041.0\App.xaml
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\x64\Debug\net8.0-windows10.0.19041.0\App.xbf
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\x64\Debug\net8.0-windows10.0.19041.0\XamlSaveStateFile.xml
+C:\Users\12462\Documents\Code\Airplayer\AirPlayer.App\obj\x64\Debug\net8.0-windows10.0.19041.0\AirPlayer.App.GeneratedMSBuildEditorConfig.editorconfig

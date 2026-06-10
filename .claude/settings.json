@@ -1,5 +1,4 @@
 {
-  "dangerouslySkipPermissions": true,
   "permissions": {
     "allow": [
       "Bash(npm run *)",
@@ -15,5 +14,9 @@
       "Read(./.env)",
       "Read(./.env.*)"
     ]
-  }
+  },
+  "enabledPlugins": {
+    "ecc@ecc": false
+  },
+  "dangerouslySkipPermissions": true
 }
