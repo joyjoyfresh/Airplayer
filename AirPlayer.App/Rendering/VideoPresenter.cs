@@ -57,6 +57,12 @@ namespace AirPlayer.App.Rendering
         private const int MaxQueueDepth = 16;
         // 连续失败多少帧后丢弃到下一 IDR 进行错误恢复
         private const int MaxConsecutiveErrors = 5;
+        // 诊断：已成功解码帧数（用于周期性日志）
+        private int _decodedFrameCount;
+        // 诊断：已跳过帧数（TryDecode 返回 false）
+        private int _skippedFrameCount;
+        // 诊断：已 Present 帧数
+        private int _presentCount;
 
         // ──────────────────────────────────────────────────────────────────
         // 初始化
@@ -189,6 +195,10 @@ namespace AirPlayer.App.Rendering
                         if (decoded > 1)
                             DiagLog.Write($"[PRS] 批量解码 {decoded} 帧，仅呈现最新");
                         ProcessFrame(lastFrame, present: true); // 最后一帧解码+呈现
+                        // 周期性诊断：每 60 帧输出一次解码成功/跳过统计
+                        _decodedFrameCount++;
+                        if (_decodedFrameCount == 1 || _decodedFrameCount % 60 == 0)
+                            DiagLog.Write($"[PRS] 解码统计: 成功={_decodedFrameCount} 跳过={_skippedFrameCount}");
                     }
                     catch (Exception ex)
                     {
@@ -208,7 +218,13 @@ namespace AirPlayer.App.Rendering
         private void ProcessFrame(H264Data frame, bool present = true)
         {
             // ── 分辨率变化检测（iOS 旋转）───────────────────────────────
+            // 仅在 IDR 帧（type=5）时才做分辨率变化检测：
+            // AirPlay 镜像中，新 SPS/PPS 到达后 session.WidthSource/HeightSource 立即更新，
+            // 但 P 帧可能仍是旧分辨率编码。若用 P 帧的 Width/Height 判断变化会误触发
+            // 解码器重置，导致参考帧丢失、后续 P 帧全部无法解码。
+            // IDR 帧必然伴随新的 SPS/PPS，是可靠的分辨率变化信号。
             if (_decoder!.IsStarted &&
+                frame.FrameType == 5 &&
                 (frame.Width != _videoWidth || frame.Height != _videoHeight))
             {
                 DiagLog.Write($"[PRS] 分辨率变化 {_videoWidth}x{_videoHeight} → {frame.Width}x{frame.Height}，重置解码器");
@@ -235,6 +251,20 @@ namespace AirPlayer.App.Rendering
             // 解码器输出格式变化（含分辨率变化）：仅重建 VideoProcessor 适配新源尺寸
             if (_decoder.ConsumeStreamChange())
             {
+                // 从解码纹理反推实际视频分辨率（MFT 解析 SPS 得到的编码尺寸可能与显示尺寸不同）
+                if (got && nv12Tex != null)
+                {
+                    int texW = (int)nv12Tex.Description.Width;
+                    int texH = (int)nv12Tex.Description.Height;
+                    // NV12 纹理高度是 Y+UV 平面之和，实际视频高度为 2/3
+                    int actualH = texH * 2 / 3;
+                    if (actualH != _videoHeight || texW != _videoWidth)
+                    {
+                        DiagLog.Write($"[PRS] STREAM_CHANGE 实际分辨率 {_videoWidth}x{_videoHeight} → {texW}x{actualH}");
+                        _videoWidth = texW;
+                        _videoHeight = actualH;
+                    }
+                }
                 // 释放缓存视图 → 用新 _videoWidth/_videoHeight 重建 VideoProcessor
                 _processor?.ReleaseCachedViews();
                 _processor?.Rebuild(_videoWidth, _videoHeight,
@@ -244,6 +274,10 @@ namespace AirPlayer.App.Rendering
 
             if (!got)
             {
+                _skippedFrameCount++;
+                // 首次跳过及每 60 次跳过输出诊断日志
+                if (_skippedFrameCount == 1 || _skippedFrameCount % 60 == 0)
+                    DiagLog.Write($"[PRS] TryDecode 返回 false (已跳过 {_skippedFrameCount} 帧) frameType={frame.FrameType}");
                 return;
             }
 
@@ -266,6 +300,10 @@ namespace AirPlayer.App.Rendering
                     _processor!.Blt(nv12Tex!, subIdx, backBuf);
 
                     Result presentHr = _swapChain.SwapChain.Present(1, 0); // 1=等垂直同步
+                    // 诊断：首次 Present 成功及每 60 帧记录一次
+                    _presentCount++;
+                    if (_presentCount == 1 || _presentCount % 60 == 0)
+                        DiagLog.Write($"[PRS] Present #{_presentCount} hr=0x{presentHr.Code:X8} texSize={nv12Tex.Description.Width}x{nv12Tex.Description.Height}");
                     if (presentHr.Code == unchecked((int)0x887A0007)) // DXGI_ERROR_DEVICE_RESET
                     {
                         DiagLog.Write("[PRS] 设备丢失 DEVICE_RESET，准备重建管线");

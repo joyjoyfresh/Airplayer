@@ -176,7 +176,28 @@ namespace AirPlayer.App.Rendering
             if (!_outputTypeSet) return false; // 还未协商成功，等待更多输入
 
             // ── 取出解码输出 ──────────────────────────────────────────────
-            return TryProcessOutput(out texture, out subresourceIndex);
+            // STREAM_CHANGE 循环重试：MFT 首次输出格式变化时返回 STREAM_CHANGE，
+            // 内部已重新协商输出类型。但 MFT 可能连续多次触发 STREAM_CHANGE
+            // （不同输出属性依次就绪），因此需要循环直到不再 STREAM_CHANGE 或成功取帧。
+            // 每次重试前检查 StreamChangeDetected 标志，避免无限循环。
+            const int maxStreamChangeRetries = 4; // 防御性上限
+            for (int attempt = 0; attempt < maxStreamChangeRetries; attempt++)
+            {
+                if (TryProcessOutput(out texture, out subresourceIndex))
+                    return true; // 成功取出解码纹理
+
+                if (!StreamChangeDetected)
+                    return false; // 非 STREAM_CHANGE 原因（如 NEED_MORE_INPUT），由调用方继续喂帧
+
+                // STREAM_CHANGE 已在 TryProcessOutput 内部处理并重新协商输出类型，
+                // 清除标志后立即重试 ProcessOutput
+                StreamChangeDetected = false;
+                DiagLog.Write($"[HWD] STREAM_CHANGE 重试 #{attempt + 1}");
+            }
+
+            // 超过重试上限仍未成功，等待下一帧输入后再取
+            DiagLog.Write("[HWD] STREAM_CHANGE 重试次数耗尽，等待下一帧");
+            return false;
         }
 
         /// <summary>尝试从 MFT 取出一帧输出纹理</summary>
