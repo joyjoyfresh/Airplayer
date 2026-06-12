@@ -1,31 +1,56 @@
-# Python 字节码缓存
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+[Bb]uild/
+bld/
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+
+# Rider
+.idea/
+
+# VS Code
+.vscode/
+
+# Build cache
+*.dtbcache.*
+*.futdcache.*
+*.FileListAbsolute.txt
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+*.log
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Python 虚拟环境
 .env/
 .venv/
 venv/
 
-# 分发/打包
-*.egg-info/
-dist/
-build/
-
-# 编辑器/IDE 临时文件
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# PDF 文件
-*.pdf
-
-# PNG 图片
-*.png
-*.PNG
-
-# 自定义
+# Custom
 test/
 outputs*/

@@ -11,6 +11,7 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <WindowsPackageType>None</WindowsPackageType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
@@ -24,7 +25,8 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.756" />
     <!-- Media Foundation 托管封装：用于调用系统 H264 硬件解码器 -->
     <PackageReference Include="Vortice.MediaFoundation" Version="3.6.2" />
-    <!-- Win2D：提供 CanvasSwapChain 低延迟呈现（解码后的帧直接画到 SwapChainPanel） -->
-    <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.2.0" />
+    <!-- Vortice D3D11/DXGI 托管封装：全 GPU 管线（硬件解码 → 视频处理 → 交换链呈现） -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+    <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
   </ItemGroup>
 </Project>

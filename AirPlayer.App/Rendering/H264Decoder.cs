@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using AirPlayer.Protocol.Utils;
 using Vortice.MediaFoundation;
@@ -25,7 +26,13 @@ namespace AirPlayer.App.Rendering
         private int _height;                // 显示高度
         private byte[]? _nv12Buffer;        // NV12 临时缓冲
         private byte[]? _bgraBuffer;        // BGRA 输出缓冲
-        private bool _started;              // 是否已配置并开始
+        private int _outputBufferSize;      // 解码器声明的输出缓冲大小
+        private bool _started;              // 是否已创建输入端并开始收流
+        private bool _outputTypeSet;        // 是否已完成输出类型协商
+
+        // 缓存 DrainOutputWithoutExtract 的输出缓冲，减少 GC 压力
+        private IMFMediaBuffer? _drainOutBuffer;
+        private IMFSample? _drainOutSample;
 
         /// <summary>构造时启动 Media Foundation</summary>
         public H264Decoder()
@@ -49,7 +56,7 @@ namespace AirPlayer.App.Rendering
             _decoder = CreateDecoder(CLSID_CMSH264DecoderMFT);
             DiagLog.Write("[DEC] MFT 实例已创建");
 
-            // 配置输入类型：H264
+            // 配置输入类型：H264；输出类型必须等 SPS/IDR 喂入后再由 MFT 报告
             var inType = MediaFactory.MFCreateMediaType();
             inType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
             inType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
@@ -57,22 +64,96 @@ namespace AirPlayer.App.Rendering
             _decoder!.SetInputType(0, inType, 0);
             DiagLog.Write("[DEC] 输入类型已设置");
 
-            // 配置输出类型：NV12（必须带帧尺寸，否则部分解码器报 MF_E_ATTRIBUTENOTFOUND）
-            var outType = MediaFactory.MFCreateMediaType();
-            outType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-            outType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
-            outType.Set(MediaTypeAttributeKeys.FrameSize, PackLong(width, height));
-            _decoder.SetOutputType(0, outType, 0);
-            DiagLog.Write("[DEC] 输出类型已设置");
+            _width = width;
+            _height = height;
 
             // 开始流（第二参为 nuint）
             _decoder.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, UIntPtr.Zero);
             _decoder.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
 
-            _width = width;
-            _height = height;
             _started = true;
-            DiagLog.Write($"[DEC] H264 解码器已初始化 {width}x{height}");
+            _outputTypeSet = false;
+            _outputBufferSize = Math.Max(width * height * 3 / 2 + 4096, 4096);
+            DiagLog.Write($"[DEC] H264 解码器输入端已初始化 {width}x{height}");
+        }
+
+        /// <summary>
+        /// 仅喂入一帧 Annex-B 数据到解码器（不做 ProcessOutput，不做 NV12→BGRA 转换）。
+        /// 用于中间帧的轻量级解码，保持参考帧链完整。
+        /// </summary>
+        public void FeedFrame(byte[] annexB)
+        {
+            EnsureStarted(_width <= 0 ? 1920 : _width, _height <= 0 ? 1080 : _height);
+
+            var inputSample = CreateSampleFromBytes(annexB);
+            try
+            {
+                _decoder!.ProcessInput(0, inputSample, 0);
+            }
+            catch (SharpGenException ex)
+            {
+                DiagLog.Write($"[DEC] FeedFrame ProcessInput 异常: 0x{ex.ResultCode.Code:X8}");
+            }
+            finally
+            {
+                inputSample.Dispose();
+            }
+
+            // 首次喂入后尝试协商输出类型
+            if (!_outputTypeSet)
+            {
+                TrySelectNv12OutputType();
+            }
+
+            // 排空解码器内部缓存的输出帧（丢弃，不做昂贵的 NV12→BGRA 转换）
+            DrainOutputWithoutExtract();
+        }
+
+        /// <summary>排空解码器输出队列，丢弃中间帧不做像素转换（复用缓冲减少分配）</summary>
+        private void DrainOutputWithoutExtract()
+        {
+            if (!_outputTypeSet) return;
+
+            int outSize = Math.Max(_outputBufferSize, _width * _height * 3 / 2 + 4096);
+
+            while (true)
+            {
+                // 复用输出缓冲，避免每次循环都分配
+                EnsureDrainBuffer(outSize);
+
+                var dataBuffer = new OutputDataBuffer { StreamID = 0, Sample = _drainOutSample! };
+
+                Result result;
+                try
+                {
+                    result = _decoder!.ProcessOutput(ProcessOutputFlags.None, 1, ref dataBuffer, out ProcessOutputStatus _);
+                }
+                catch (SharpGenException ex)
+                {
+                    result = ex.ResultCode;
+                }
+
+                if (result.Code == MF_E_TRANSFORM_NEED_MORE_INPUT) break;
+                if (result.Code == MF_E_TRANSFORM_STREAM_CHANGE)
+                {
+                    HandleStreamChange();
+                    if (!_outputTypeSet) break;
+                    continue;
+                }
+                if (result.Failure) break;
+            }
+        }
+
+        /// <summary>确保排空用的输出缓冲已创建且容量足够</summary>
+        private void EnsureDrainBuffer(int minSize)
+        {
+            if (_drainOutBuffer == null || _drainOutSample == null)
+            {
+                _drainOutBuffer = MediaFactory.MFCreateMemoryBuffer(minSize);
+                _drainOutSample = MediaFactory.MFCreateSample();
+                _drainOutSample.AddBuffer(_drainOutBuffer);
+                _drainOutBuffer.Dispose(); // 样本持有引用，释放本地引用
+            }
         }
 
         /// <summary>
@@ -102,15 +183,23 @@ namespace AirPlayer.App.Rendering
                 inputSample.Dispose();
             }
 
+            if (!_outputTypeSet)
+            {
+                TrySelectNv12OutputType(); // 首个 SPS/IDR 输入后再协商输出类型
+            }
+
             bool produced = false;
 
-            // 预估输出样本大小（按对齐到 16 的尺寸计算 NV12，富余 4KB）
-            int codedW = (_width + 15) & ~15;
-            int codedH = (_height + 15) & ~15;
-            int outSize = codedW * codedH * 3 / 2 + 4096;
+            // 使用解码器协商后声明的输出缓冲大小，避免输出样本尺寸不符合 MFT 要求
+            int outSize = Math.Max(_outputBufferSize, _width * _height * 3 / 2 + 4096);
 
             while (true)
             {
+                if (!_outputTypeSet)
+                {
+                    break; // 输出类型尚未可用时先等待后续帧
+                }
+
                 // 自行分配输出样本（MS H264 解码器不自带输出样本）
                 var outBuffer = MediaFactory.MFCreateMemoryBuffer(outSize);
                 var outSample = MediaFactory.MFCreateSample();
@@ -123,7 +212,15 @@ namespace AirPlayer.App.Rendering
                     Sample = outSample
                 };
 
-                Result result = _decoder!.ProcessOutput(ProcessOutputFlags.None, 1, ref dataBuffer, out ProcessOutputStatus _);
+                Result result; // ProcessOutput 返回码
+                try
+                {
+                    result = _decoder!.ProcessOutput(ProcessOutputFlags.None, 1, ref dataBuffer, out ProcessOutputStatus _); // 尝试取出一帧解码图像
+                }
+                catch (SharpGenException ex)
+                {
+                    result = ex.ResultCode; // Vortice 可能把失败 HRESULT 直接抛成异常
+                }
 
                 if (result.Code == MF_E_TRANSFORM_NEED_MORE_INPUT)
                 {
@@ -134,6 +231,7 @@ namespace AirPlayer.App.Rendering
                 {
                     outSample.Dispose();
                     HandleStreamChange();
+                    if (!_outputTypeSet) break; // 重新协商失败时等待更多输入
                     continue;
                 }
                 if (result.Failure)
@@ -153,15 +251,59 @@ namespace AirPlayer.App.Rendering
             return produced;
         }
 
-        /// <summary>处理输出格式变化：重新设置 NV12 输出类型</summary>
+        /// <summary>尝试从解码器可用输出类型中选择 NV12</summary>
+        private bool TrySelectNv12OutputType()
+        {
+            for (int index = 0; ; index++)
+            {
+                IMFMediaType outType; // 当前枚举到的输出媒体类型
+                try
+                {
+                    outType = _decoder!.GetOutputAvailableType(0, index); // 读取 MFT 推荐的完整输出类型
+                }
+                catch (SharpGenException)
+                {
+                    break; // 没有更多输出类型
+                }
+
+                using (outType)
+                {
+                    Guid subtype = outType.GetGUID(MediaTypeAttributeKeys.Subtype); // 读取像素格式
+                    if (subtype != VideoFormatGuids.NV12) continue; // 只接受 NV12，便于后续 CPU 转 BGRA
+
+                    try
+                    {
+                        _decoder!.SetOutputType(0, outType, 0); // 使用 MFT 推荐类型完成输出协商，不强行改写帧尺寸
+                        _outputTypeSet = true; // 标记输出类型已协商
+                        UpdateOutputSizeFromCurrentType(); // 从实际输出类型读取尺寸
+                        _outputBufferSize = Math.Max(_decoder.GetOutputStreamInfo(0).Size, _width * _height * 3 / 2 + 4096); // 更新缓冲大小
+                        DiagLog.Write($"[DEC] 输出类型已设置 NV12 index={index} {_width}x{_height} out={_outputBufferSize}B"); // 记录选中的输出类型序号
+                        return true;
+                    }
+                    catch (SharpGenException ex)
+                    {
+                        DiagLog.Write($"[DEC] 跳过不可用 NV12 输出类型 index={index} hr=0x{ex.ResultCode.Code:X8}"); // 记录失败类型并继续尝试
+                    }
+                }
+            }
+
+            DiagLog.Write("[DEC] 暂未获得可用 NV12 输出类型，等待更多输入"); // 输出类型可能需要更多码流信息
+            return false;
+        }
+
+        /// <summary>处理输出格式变化：重新选择 NV12 输出类型</summary>
         private void HandleStreamChange()
         {
-            var newOut = MediaFactory.MFCreateMediaType();
-            newOut.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-            newOut.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.NV12);
-            newOut.Set(MediaTypeAttributeKeys.FrameSize, PackLong(_width, _height));
-            _decoder!.SetOutputType(0, newOut, 0);
-            DiagLog.Write("[DEC] 输出格式变化，已重设 NV12 输出类型");
+            _outputTypeSet = false; // 标记输出格式需要重新协商
+            TrySelectNv12OutputType(); // 重新按 MFT 推荐类型协商输出格式
+            _outputBufferSize = Math.Max(_decoder!.GetOutputStreamInfo(0).Size, _width * _height * 3 / 2 + 4096); // 更新输出缓冲大小
+            DiagLog.Write("[DEC] 输出格式变化，已尝试重设 NV12 输出类型"); // 记录格式变化
+        }
+
+        /// <summary>从当前输出类型读取实际帧尺寸</summary>
+        private void UpdateOutputSizeFromCurrentType()
+        {
+            // 当前 Vortice 包装未暴露统一的 UINT64 读取方法，继续沿用 AirPlay 镜像头给出的显示尺寸
         }
 
         /// <summary>从 NV12 输出样本提取像素并转换为 BGRA</summary>
@@ -186,7 +328,12 @@ namespace AirPlayer.App.Rendering
             // 由缓冲总长度反推行跨距：curLen = stride * codedHeight * 3/2
             int codedHeight = (height + 15) & ~15;
             int stride = (int)((long)curLen * 2 / (3L * codedHeight));
-            if (stride < width) stride = width;
+            if (stride < width) stride = (width + 15) & ~15;
+            if (stride * codedHeight * 3 / 2 > curLen)
+            {
+                codedHeight = height; // 某些解码器输出显示高度而不是编码对齐高度
+                stride = Math.Max(width, (int)((long)curLen * 2 / (3L * Math.Max(1, codedHeight))));
+            }
 
             int pixels = width * height;
             // 必须正好等于 宽×高×4，CanvasBitmap.CreateFromBytes 会校验长度
@@ -197,37 +344,72 @@ namespace AirPlayer.App.Rendering
             bgra = _bgraBuffer!;
         }
 
-        /// <summary>NV12 → BGRA（BT.601），CPU 转换</summary>
+        #region NV12 → BGRA 转换（unsafe 指针 + 2 像素成对优化）
+
+        /// <summary>NV12 → BGRA（BT.601），使用 unsafe 指针 + 2 像素成对处理减少 UV 重复读取</summary>
         private static void Nv12ToBgra(byte[] nv12, int stride, int codedHeight, int width, int height, byte[] bgra)
         {
-            int uvStart = stride * codedHeight;  // UV 平面起始（完整 Y 平面之后）
-            for (int y = 0; y < height; y++)
+            unsafe
             {
-                int yRow = y * stride;
-                int uvRow = uvStart + (y >> 1) * stride;
-                int outRow = y * width * 4;
-                for (int x = 0; x < width; x++)
+                fixed (byte* pNv12 = nv12)
+                fixed (byte* pBgra = bgra)
                 {
-                    int yy = nv12[yRow + x] & 0xFF;
-                    int uvCol = x & ~1;
-                    int u = (nv12[uvRow + uvCol] & 0xFF) - 128;
-                    int v = (nv12[uvRow + uvCol + 1] & 0xFF) - 128;
+                    byte* uvStart = pNv12 + stride * codedHeight; // UV 平面起始偏移
 
-                    int c = yy - 16;
-                    int r = (298 * c + 409 * v + 128) >> 8;
-                    int g = (298 * c - 100 * u - 208 * v + 128) >> 8;
-                    int b = (298 * c + 516 * u + 128) >> 8;
+                    for (int y = 0; y < height; y++)
+                    {
+                        byte* yRow = pNv12 + y * stride;           // 当前行 Y 数据指针
+                        byte* uvRow = uvStart + (y >> 1) * stride; // 当前行对应 UV 数据指针
+                        byte* outRow = pBgra + y * width * 4;      // 输出 BGRA 行首地址
 
-                    int o = outRow + x * 4;
-                    bgra[o + 0] = ClampByte(b);
-                    bgra[o + 1] = ClampByte(g);
-                    bgra[o + 2] = ClampByte(r);
-                    bgra[o + 3] = 255;
+                        int x;
+                        // 2 像素成对处理：相邻两像素共享同一 UV 对，减少 UV 读取次数
+                        for (x = 0; x <= width - 2; x += 2)
+                        {
+                            // 读取 2 个 Y 值和 1 对 UV
+                            int yy0 = yRow[x] & 0xFF;
+                            int yy1 = yRow[x + 1] & 0xFF;
+                            int u = (uvRow[x] & 0xFF) - 128;
+                            int v = (uvRow[x + 1] & 0xFF) - 128;
+
+                            // 第一个像素的 BT.601 YUV→RGB
+                            int c0 = yy0 - 16;
+                            int off = x * 4;
+                            outRow[off]     = ClampByte((298 * c0 + 516 * u + 128) >> 8); // B
+                            outRow[off + 1] = ClampByte((298 * c0 - 100 * u - 208 * v + 128) >> 8); // G
+                            outRow[off + 2] = ClampByte((298 * c0 + 409 * v + 128) >> 8); // R
+                            outRow[off + 3] = 255; // A
+
+                            // 第二个像素（复用同一 U、V）
+                            int c1 = yy1 - 16;
+                            int off1 = off + 4;
+                            outRow[off1]     = ClampByte((298 * c1 + 516 * u + 128) >> 8); // B
+                            outRow[off1 + 1] = ClampByte((298 * c1 - 100 * u - 208 * v + 128) >> 8); // G
+                            outRow[off1 + 2] = ClampByte((298 * c1 + 409 * v + 128) >> 8); // R
+                            outRow[off1 + 3] = 255; // A
+                        }
+
+                        // 奇数宽度剩余的最后一个像素
+                        if (x < width)
+                        {
+                            int uvCol = x & ~1;
+                            int c0 = (yRow[x] & 0xFF) - 16;
+                            int u = (uvRow[uvCol] & 0xFF) - 128;
+                            int v = (uvRow[uvCol + 1] & 0xFF) - 128;
+                            int off = x * 4;
+                            outRow[off]     = ClampByte((298 * c0 + 516 * u + 128) >> 8); // B
+                            outRow[off + 1] = ClampByte((298 * c0 - 100 * u - 208 * v + 128) >> 8); // G
+                            outRow[off + 2] = ClampByte((298 * c0 + 409 * v + 128) >> 8); // R
+                            outRow[off + 3] = 255; // A
+                        }
+                    }
                 }
             }
         }
 
         private static byte ClampByte(int v) => (byte)(v < 0 ? 0 : (v > 255 ? 255 : v));
+
+        #endregion
 
         /// <summary>把 (width,height) 打包为 MF_MT_FRAME_SIZE 的 64 位值</summary>
         private static long PackLong(int high, int low) => ((long)high << 32) | (uint)low;
@@ -279,6 +461,11 @@ namespace AirPlayer.App.Rendering
             catch { }
             _decoder?.Dispose();
             _decoder = null;
+
+            // 释放排空缓冲
+            _drainOutSample?.Dispose();
+            _drainOutSample = null;
+
             try { MediaFactory.MFShutdown(); } catch { }
         }
     }

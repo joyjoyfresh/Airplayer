@@ -1,23 +1,24 @@
 using System;
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Windowing;
 using Microsoft.UI;
+using Windows.Graphics;
 using AirPlayer.Protocol;
 using AirPlayer.Protocol.Models;
 using AirPlayer.Protocol.Utils;
 using AirPlayer.App.Rendering;
-using Microsoft.Graphics.Canvas;
-using Windows.Graphics.DirectX;
+using System.Threading;
 
 namespace AirPlayer.App
 {
     /// <summary>
-    /// 主窗口后置代码类：管理 AirPlay 服务、事件监听，以及「解码即呈现」的视频管线。
+    /// 主窗口后置代码类：管理 AirPlay 服务、事件监听，以及全 GPU 视频管线。
+    /// 视频管线由 VideoPresenter 全权负责，MainWindow 仅负责生命周期协调。
     /// </summary>
     public partial class MainWindow : Window
     {
@@ -27,7 +28,7 @@ namespace AirPlayer.App
         // 接收监听器取消句柄
         private CancellationTokenSource? _cts;
 
-        // 应用窗口抽象，用于控制全屏
+        // 应用窗口抽象，用于控制全屏和 Resize
         private AppWindow? _appWindow;
 
         // 全屏状态标志
@@ -36,25 +37,24 @@ namespace AirPlayer.App
         // 镜像连接是否活动中
         private volatile bool _isMirroringActive;
 
-        // ===== 解码渲染管线相关 =====
-        private H264Decoder? _decoder;                       // MF H264 解码器
-        private CanvasSwapChain? _swapChain;                 // Win2D 交换链（呈现目标）
-        private Thread? _renderThread;                       // 渲染线程
-        private volatile bool _renderRunning;                // 渲染线程运行标志
-        private readonly object _queueLock = new object();   // 帧队列锁
-        private readonly Queue<H264Data> _frameQueue = new();// 待解码帧队列
-        private readonly SemaphoreSlim _frameSignal = new SemaphoreSlim(0); // 新帧唤醒信号
-        private bool _pipelineStarting;                      // 管线是否正在创建
-        private volatile bool _pipelineReady;                // 管线是否就绪
-        private bool _gotKeyframe;                           // 是否已收到首个关键帧
-        private bool _firstFrameLogged;                      // 诊断：是否已记录首帧
+        // ===== 全 GPU 视频管线 =====
+        private VideoPresenter? _presenter;           // 全 GPU 视频呈现器
+        private bool _pipelineStarting;               // 管线是否正在创建
+        private volatile bool _pipelineReady;         // 管线是否就绪
+        private bool _gotKeyframe;                    // 是否已收到首个关键帧
+        private bool _firstFrameLogged;               // 诊断：首帧是否已记录
+        private int _videoWidth;
+        private int _videoHeight;
+        private double _videoAspectRatio;
+        private int _rotationDegrees; // 0 or 270 (toggle only)
+        private H264Data? _pendingFirstFrame;         // 首帧 IDR 暂存，管线就绪后补投
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
         {
             this.InitializeComponent();
 
-            // 获取窗口原生句柄并绑定 AppWindow（用于全屏控制）
+            // 获取原生窗口句柄并绑定 AppWindow
             IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             WindowId windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
@@ -62,32 +62,37 @@ namespace AirPlayer.App
             this.Title = "AirPlayer Receiver";
             this.Closed += MainWindow_Closed;
 
+            // 注册全局键盘快捷键（F11/Escape）
+            this.Content.KeyDown += MainWindow_KeyDown;
+
+            // 监听主网格尺寸变化，用于旋转时同步面板尺寸
+            MainGrid.SizeChanged += MainGrid_SizeChanged;
+
             // 默认设备名取本机计算机名
             string hostName = Environment.MachineName;
             DeviceNameText.Text = hostName;
 
             // 启动等待页脉动动画
             if (MainGrid.Resources.TryGetValue("PulseStoryboard", out object sbObj) && sbObj is Storyboard sb)
-            {
                 sb.Begin();
-            }
 
             StartReceiver(hostName);
         }
 
-        /// <summary>启动 AirPlay 接收服务</summary>
-        /// <param name="deviceName">投屏显示名称</param>
+        // ──────────────────────────────────────────────────────────────────
+        // AirPlay 服务启动
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>后台启动 AirPlay 接收服务</summary>
         private void StartReceiver(string deviceName)
         {
             _cts = new CancellationTokenSource();
 
-            // 设备 MAC 与密钥由接收器内部随机生成并持久化
             _receiver = new AirPlayReceiver(deviceName);
             _receiver.OnMirroringStartedReceived += Receiver_OnMirroringStarted;
             _receiver.OnMirroringStoppedReceived += Receiver_OnMirroringStopped;
-            _receiver.OnH264DataReceived += Receiver_OnH264DataReceived;
+            _receiver.OnH264DataReceived         += Receiver_OnH264DataReceived;
 
-            // 后台线程启动网络服务，避免阻塞 UI
             Task.Run(async () =>
             {
                 try
@@ -102,176 +107,339 @@ namespace AirPlayer.App
             });
         }
 
-        /// <summary>镜像开始：重置状态、等待首帧创建管线</summary>
+        // ──────────────────────────────────────────────────────────────────
+        // 镜像事件处理
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>镜像开始：重置状态，等待首帧触发管线创建</summary>
         private void Receiver_OnMirroringStarted(object? sender, EventArgs e)
         {
             DispatcherQueue.TryEnqueue(() =>
             {
                 _isMirroringActive = true;
-                _gotKeyframe = false;
-                _firstFrameLogged = false;
-                lock (_queueLock) { _frameQueue.Clear(); }
+                _gotKeyframe       = false;
+                _firstFrameLogged  = false;
             });
         }
 
-        /// <summary>镜像结束：停止渲染线程并释放资源</summary>
+        /// <summary>镜像结束：停止管线，恢复引导页</summary>
         private void Receiver_OnMirroringStopped(object? sender, EventArgs e)
         {
             DispatcherQueue.TryEnqueue(() =>
             {
                 _isMirroringActive = false;
-                StopRenderPipeline();
+                StopVideoPipeline();
 
-                // 解除并隐藏呈现面板，恢复引导页
-                SwapPanel.SwapChain = null;
-                SwapPanel.Visibility = Visibility.Collapsed;
-                PromoGrid.Visibility = Visibility.Visible;
+                SwapPanel.Visibility  = Visibility.Collapsed;
+                PromoGrid.Visibility  = Visibility.Visible;
             });
         }
 
-        /// <summary>每收到一帧 H264（Annex-B）时入队，交由渲染线程解码呈现</summary>
+        /// <summary>每收到一帧 H264 时：过滤后入队，首帧触发管线创建</summary>
         private void Receiver_OnH264DataReceived(object? sender, H264Data data)
         {
             if (!_isMirroringActive) return;
 
-            // 诊断：记录首帧
+            // 诊断：记录首帧到达
             if (!_firstFrameLogged)
             {
                 _firstFrameLogged = true;
-                DiagLog.Write($"[UI] 首个 H264 帧到达 {data.Width}x{data.Height} type={data.FrameType}");
+                DiagLog.Write($"[UI] 首帧到达 {data.Width}x{data.Height} type={data.FrameType}");
             }
 
-            // 丢弃首个关键帧之前的帧，确保解码器从 IDR 起步
+            // 等待首个关键帧(IDR)：之前的 P 帧必须丢弃，否则解码器无参考帧
             if (!_gotKeyframe)
             {
-                if (data.FrameType != 5) return;
+                if (data.FrameType != 5) return; // 非 IDR，丢弃
                 _gotKeyframe = true;
+                DiagLog.Write("[UI] 收到首个 IDR，开始投递帧");
             }
 
-            lock (_queueLock)
+            // 管线就绪后直接投递
+            if (_pipelineReady)
             {
-                _frameQueue.Enqueue(data);
-
-                // 首帧触发唯一一次管线创建（在 UI 线程）
-                if (!_pipelineStarting && !_pipelineReady)
-                {
-                    _pipelineStarting = true;
-                    int w = data.Width, h = data.Height;
-                    DispatcherQueue.TryEnqueue(() => CreateVideoPipeline(w, h));
-                }
-            }
-            _frameSignal.Release();
-        }
-
-        /// <summary>在 UI 线程创建 Win2D 交换链、解码器并启动渲染线程</summary>
-        private void CreateVideoPipeline(int width, int height)
-        {
-            if (!_isMirroringActive) return;
-
-            try
-            {
-                // 创建 Win2D 交换链并挂到面板（dpi=96 时尺寸即像素）
-                var device = CanvasDevice.GetSharedDevice();
-                _swapChain = new CanvasSwapChain(device, width <= 0 ? 1920 : width, height <= 0 ? 1080 : height, 96f);
-                SwapPanel.SwapChain = _swapChain;
-                SwapPanel.Visibility = Visibility.Visible;
-                PromoGrid.Visibility = Visibility.Collapsed;
-            }
-            catch (Exception ex)
-            {
-                DiagLog.Write($"[SWAP] 交换链创建失败: {ex.Message}");
+                _presenter?.EnqueueFrame(data);
                 return;
             }
 
-            // 创建解码器
-            _decoder = new H264Decoder();
-            _decoder.SetFrameSize(width, height);
-
-            // 启动渲染线程（Media Foundation 要求 MTA 套间）
-            _renderRunning = true;
-            _renderThread = new Thread(RenderLoop) { IsBackground = true, Name = "VideoRender" };
-            _renderThread.SetApartmentState(ApartmentState.MTA);
-            _renderThread.Start();
-
-            _pipelineReady = true;
-            DiagLog.Write("[PIPE] 解码渲染管线就绪");
+            // 管线尚未就绪：首帧（IDR）触发唯一一次管线创建，并暂存该帧
+            if (!_pipelineStarting)
+            {
+                _pipelineStarting = true;
+                _pendingFirstFrame = data; // 暂存首帧 IDR，管线就绪后补投
+                int w = data.Width, h = data.Height;
+                DispatcherQueue.TryEnqueue(() => CreateVideoPipeline(w, h));
+            }
         }
 
-        /// <summary>渲染线程：从队列取帧 → 解码 → 立即呈现（无时钟调度）</summary>
-        private void RenderLoop()
-        {
-            while (_renderRunning)
-            {
-                _frameSignal.Wait(200);
-                if (!_renderRunning) break;
+        // ──────────────────────────────────────────────────────────────────
+        // 管线创建（在 UI 线程）
+        // ──────────────────────────────────────────────────────────────────
 
-                // 一次性排空队列中的所有帧，按序解码呈现（H264Data 是结构体，用 bool 判空）
-                while (_renderRunning)
+        /// <summary>
+        /// 在 UI 线程创建全 GPU 视频管线。
+        /// 完成后 VideoPresenter 接管解码和呈现。
+        /// </summary>
+        private void CreateVideoPipeline(int videoWidth, int videoHeight)
+        {
+            if (!_isMirroringActive) return;
+
+            _videoWidth = videoWidth;
+            _videoHeight = videoHeight;
+            _videoAspectRatio = (double)videoWidth / videoHeight;
+
+            // 计算初始窗口大小（保持比例，不超过屏幕 85%）
+            CalculateWindowSizeForVideo(videoWidth, videoHeight, out int winW, out int winH);
+
+            try
+            {
+                // 显示视频面板，隐藏引导页
+                SwapPanel.Visibility  = Visibility.Visible;
+                PromoGrid.Visibility  = Visibility.Collapsed;
+
+                // 调整窗口大小并注册比例锁定
+                _appWindow?.Resize(new SizeInt32(winW, winH));
+                _appWindow!.Changed += AppWindow_Changed;
+
+                DiagLog.Write($"[UI] 窗口调整 {winW}x{winH} (视频 {videoWidth}x{videoHeight})");
+
+                // 获取面板物理像素尺寸（VisualSize 是逻辑尺寸，需乘 DPI 缩放）
+                double dpiScale  = GetDpiScale();
+                int panelPixelW  = Math.Max(1, (int)(SwapPanel.ActualWidth  * dpiScale));
+                int panelPixelH  = Math.Max(1, (int)(SwapPanel.ActualHeight * dpiScale));
+
+                // 若 ActualSize 还未测量，回落到窗口尺寸
+                if (panelPixelW < 8 || panelPixelH < 8)
                 {
-                    H264Data frame;
-                    lock (_queueLock)
-                    {
-                        if (_frameQueue.Count == 0) break;
-                        frame = _frameQueue.Dequeue();
-                    }
-
-                    try
-                    {
-                        if (_decoder != null &&
-                            _decoder.TryDecode(frame.Data, out byte[] bgra, out int w, out int h) &&
-                            _swapChain != null)
-                        {
-                            PresentFrame(bgra, w, h);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        DiagLog.Write($"[RENDER] 解码/呈现异常: {ex.Message}");
-                    }
+                    panelPixelW = winW;
+                    panelPixelH = winH;
                 }
+
+                // 创建并初始化 VideoPresenter
+                _presenter = new VideoPresenter();
+                _presenter.Initialize(SwapPanel, videoWidth, videoHeight, panelPixelW, panelPixelH);
+
+                // 注册面板尺寸变化事件（用于 Resize）
+                SwapPanel.SizeChanged += SwapPanel_SizeChanged;
             }
-        }
-
-        /// <summary>把一帧 BGRA 画到交换链并 Present</summary>
-        private void PresentFrame(byte[] bgra, int width, int height)
-        {
-            var sc = _swapChain;
-            if (sc == null) return;
-
-            using (var ds = sc.CreateDrawingSession(Microsoft.UI.Colors.Black))
-            using (var bmp = CanvasBitmap.CreateFromBytes(sc.Device, bgra, width, height, DirectXPixelFormat.B8G8R8A8UIntNormalized))
+            catch (Exception ex)
             {
-                // 按交换链尺寸缩放绘制（自适应窗口）
-                ds.DrawImage(bmp, new Windows.Foundation.Rect(0, 0, sc.Size.Width, sc.Size.Height));
+                DiagLog.Write($"[UI] 管线创建失败: {ex}");
+                StopVideoPipeline();
+                _pipelineStarting = false;
+                return;
             }
-            sc.Present();
-        }
 
-        /// <summary>停止渲染线程并释放解码器与交换链</summary>
-        private void StopRenderPipeline()
-        {
-            _renderRunning = false;
-            _frameSignal.Release();
-            try { _renderThread?.Join(500); } catch { }
-            _renderThread = null;
-
-            lock (_queueLock) { _frameQueue.Clear(); }
-
-            _decoder?.Dispose();
-            _decoder = null;
-            _swapChain?.Dispose();
-            _swapChain = null;
-
+            _pipelineReady    = true;
             _pipelineStarting = false;
-            _pipelineReady = false;
-            _gotKeyframe = false;
-            _firstFrameLogged = false;
+            DiagLog.Write("[UI] 全 GPU 管线就绪");
+
+            // 补投暂存的首帧 IDR，避免首个关键帧丢失导致黑屏
+            if (_pendingFirstFrame.HasValue)
+            {
+                _presenter?.EnqueueFrame(_pendingFirstFrame.Value);
+                DiagLog.Write("[UI] 已补投首帧 IDR");
+                _pendingFirstFrame = null;
+            }
         }
+
+        // ──────────────────────────────────────────────────────────────────
+        // 面板 Resize
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>面板视觉尺寸变化时通知 VideoPresenter 更新输出目标</summary>
+        private void SwapPanel_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (!_pipelineReady || _presenter == null) return;
+
+            double dpiScale = GetDpiScale();
+            int pixelW = Math.Max(1, (int)(e.NewSize.Width  * dpiScale));
+            int pixelH = Math.Max(1, (int)(e.NewSize.Height * dpiScale));
+
+            _presenter.NotifyPanelSizeChanged(pixelW, pixelH);
+            DiagLog.Write($"[UI] SwapPanel SizeChanged → {pixelW}x{pixelH}");
+        }
+
+        /// <summary>
+        /// 主网格尺寸变化时：若处于旋转状态，同步更新 SwapChainPanel 的显式尺寸
+        /// 使面板在窗口中居中且旋转后视觉填满窗口。
+        /// </summary>
+        private void MainGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (_rotationDegrees != 270) return;
+
+            // 面板宽度 = 窗口高度，面板高度 = 窗口宽度（交换以适配旋转）
+            SwapPanel.Width = e.NewSize.Height;
+            SwapPanel.Height = e.NewSize.Width;
+        }
+
+        /// <summary>
+        /// 窗口尺寸变化时不做比例修正，由 VideoProcessor 信箱缩放铺满任意形状窗口。
+        /// </summary>
+        private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
+        {
+            // 不再锁定窗口比例——用户可自由缩放窗口，画面自动信箱/邮筒铺满
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // 管线停止 / 释放
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>停止并释放视频管线，重置所有状态</summary>
+        private void StopVideoPipeline()
+        {
+            SwapPanel.SizeChanged -= SwapPanel_SizeChanged;
+
+            if (_appWindow != null)
+                _appWindow.Changed -= AppWindow_Changed;
+
+            // 重置旋转状态
+            SwapPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+            SwapPanel.VerticalAlignment = VerticalAlignment.Stretch;
+            SwapPanel.Width = double.NaN;
+            SwapPanel.Height = double.NaN;
+            SwapPanel.RenderTransform = null;
+            _rotationDegrees = 0;
+
+            _presenter?.Dispose();
+            _presenter = null;
+
+            _pipelineReady    = false;
+            _pipelineStarting = false;
+            _gotKeyframe      = false;
+            _firstFrameLogged = false;
+            _pendingFirstFrame = null;
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // 工具方法
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>计算窗口目标尺寸（最大不超过屏幕 85%，保持视频比例）</summary>
+        private void CalculateWindowSizeForVideo(int videoWidth, int videoHeight,
+            out int winW, out int winH)
+        {
+            winW = videoWidth;
+            winH = videoHeight;
+            if (_appWindow == null || videoWidth <= 0 || videoHeight <= 0) return;
+
+            var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
+            if (displayArea == null) return;
+
+            double maxW = displayArea.WorkArea.Width  * 0.85;
+            double maxH = displayArea.WorkArea.Height * 0.85;
+            double aspect = (double)videoWidth / videoHeight;
+
+            if (maxW / maxH > aspect)
+            {
+                winH = (int)maxH;
+                winW = (int)(maxH * aspect);
+            }
+            else
+            {
+                winW = (int)maxW;
+                winH = (int)(maxW / aspect);
+            }
+
+            if (winW < 320) winW = 320;
+            if (winH < 240) winH = 240;
+        }
+
+        /// <summary>获取当前窗口的 DPI 缩放比例（物理像素 / 逻辑像素）</summary>
+        private double GetDpiScale()
+        {
+            try
+            {
+                // XamlRoot.RasterizationScale 给出 DPI 缩放（1.0 = 96 DPI）
+                if (Content?.XamlRoot != null)
+                    return Content.XamlRoot.RasterizationScale;
+            }
+            catch { }
+            return 1.0; // 回落到 1x（96 DPI）
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // 全屏
+        // ──────────────────────────────────────────────────────────────────
 
         /// <summary>全屏切换按钮</summary>
         private void FullScreenButton_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
 
-        /// <summary>切换全屏/窗口模式</summary>
+        /// <summary>键盘快捷键：F11 切换全屏，Escape 退出全屏，R 旋转画面</summary>
+        private void MainWindow_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.F11)
+            {
+                ToggleFullScreen();
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.Escape && _isFullScreen)
+            {
+                ToggleFullScreen();
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.R)
+            {
+                RotateVideo();
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>旋转按钮</summary>
+        private void RotateButton_Click(object sender, RoutedEventArgs e) => RotateVideo();
+
+        /// <summary>
+        /// 旋转画面：在 0° 和 270°（逆时针 90°）之间切换。
+        /// 通过 RotateTransform 实现视觉旋转，并调整窗口尺寸适应旋转后的画面。
+        /// </summary>
+        private void RotateVideo()
+        {
+            if (!_pipelineReady || _videoAspectRatio <= 0) return;
+
+            _rotationDegrees = (_rotationDegrees == 0) ? 270 : 0;
+            ApplyRotation();
+            DiagLog.Write($"[UI] 画面旋转 → {_rotationDegrees}°");
+        }
+
+        /// <summary>
+        /// 应用当前旋转状态：设置 SwapChainPanel 的视觉旋转变换，
+        /// 并调整窗口大小以适应旋转后的画面比例。
+        /// </summary>
+        private void ApplyRotation()
+        {
+            if (_appWindow == null) return;
+
+            if (_rotationDegrees == 270)
+            {
+                // 逆时针 90°：面板尺寸 = 窗口尺寸（交换），居中，视觉旋转 270°
+                SwapPanel.HorizontalAlignment = HorizontalAlignment.Center;
+                SwapPanel.VerticalAlignment = VerticalAlignment.Center;
+
+                SwapPanel.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
+                SwapPanel.RenderTransform = new RotateTransform { Angle = 270 };
+
+                // 窗口按旋转后的比例调整（交换宽高）
+                CalculateWindowSizeForVideo(_videoHeight, _videoWidth, out int winW, out int winH);
+                _appWindow.Resize(new SizeInt32(winW, winH));
+
+                // 面板尺寸由 MainGrid_SizeChanged 设置（跟随窗口）
+            }
+            else
+            {
+                // 恢复原始状态
+                SwapPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+                SwapPanel.VerticalAlignment = VerticalAlignment.Stretch;
+                SwapPanel.Width = double.NaN;
+                SwapPanel.Height = double.NaN;
+                SwapPanel.RenderTransform = null;
+
+                // 窗口按原始视频比例调整
+                CalculateWindowSizeForVideo(_videoWidth, _videoHeight, out int winW, out int winH);
+                _appWindow.Resize(new SizeInt32(winW, winH));
+            }
+        }
+
+        /// <summary>切换全屏 / 窗口模式</summary>
         private void ToggleFullScreen()
         {
             if (_appWindow == null) return;
@@ -280,22 +448,41 @@ namespace AirPlayer.App
             {
                 _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
                 _isFullScreen = false;
-                FullScreenButton.Content = "";
+                FullScreenButton.Content = "";
+
+                // 退出全屏后恢复窗口尺寸（考虑旋转）
+                if (_pipelineReady && _videoAspectRatio > 0)
+                {
+                    if (_rotationDegrees == 270)
+                    {
+                        CalculateWindowSizeForVideo(_videoHeight, _videoWidth, out int rw, out int rh);
+                        _appWindow.Resize(new SizeInt32(rw, rh));
+                    }
+                    else
+                    {
+                        CalculateWindowSizeForVideo(_videoWidth, _videoHeight, out int rw, out int rh);
+                        _appWindow.Resize(new SizeInt32(rw, rh));
+                    }
+                }
             }
             else
             {
                 _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
                 _isFullScreen = true;
-                FullScreenButton.Content = "";
+                FullScreenButton.Content = "";
             }
         }
+
+        // ──────────────────────────────────────────────────────────────────
+        // 窗口关闭
+        // ──────────────────────────────────────────────────────────────────
 
         /// <summary>窗口关闭：清理所有后台资源</summary>
         private void MainWindow_Closed(object sender, WindowEventArgs args)
         {
-            _cts?.Cancel();
-            _receiver?.Dispose();
-            StopRenderPipeline();
+            _cts?.Cancel();        // 停止 AirPlay 监听
+            _receiver?.Dispose();  // 释放接收器
+            StopVideoPipeline();   // 释放视频管线
         }
     }
 }

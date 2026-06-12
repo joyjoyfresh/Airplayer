@@ -5,7 +5,6 @@
     xmlns:local="using:AirPlayer.App"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
     mc:Ignorable="d"
     Title="AirPlayer Receiver">
 
@@ -35,8 +34,8 @@
             </Storyboard>
         </Grid.Resources>
         
-        <!-- 视频显示容器（Win2D SwapChain），投屏开启时显示 -->
-        <canvas:CanvasSwapChainPanel
+        <!-- 视频显示容器（原生 SwapChainPanel，全 GPU 管线呈现），投屏开启时显示 -->
+        <SwapChainPanel
             x:Name="SwapPanel"
             HorizontalAlignment="Stretch"
             VerticalAlignment="Stretch"
@@ -97,22 +96,41 @@
             </StackPanel>
         </Grid>
         
-        <!-- 右上角悬浮全屏控制按钮 -->
-        <Button 
-            x:Name="FullScreenButton"
-            Content="&#xE740;" 
-            FontFamily="Segoe MDL2 Assets" 
-            FontSize="16"
-            Foreground="White"
-            Background="#30000000"
-            BorderThickness="0"
-            Width="40"
-            Height="40"
-            CornerRadius="20"
+        <!-- 右上角悬浮控制按钮 -->
+        <StackPanel 
             VerticalAlignment="Top" 
             HorizontalAlignment="Right" 
-            Margin="20"
-            Click="FullScreenButton_Click"
-            ToolTipService.ToolTip="切换全屏 (F11)"/>
+            Orientation="Horizontal" 
+            Spacing="8"
+            Margin="20">
+            <!-- 旋转按钮 -->
+            <Button 
+                x:Name="RotateButton"
+                Content="&#xE777;" 
+                FontFamily="Segoe MDL2 Assets" 
+                FontSize="16"
+                Foreground="White"
+                Background="#30000000"
+                BorderThickness="0"
+                Width="40"
+                Height="40"
+                CornerRadius="20"
+                Click="RotateButton_Click"
+                ToolTipService.ToolTip="旋转画面 (R)"/>
+            <!-- 全屏按钮 -->
+            <Button 
+                x:Name="FullScreenButton"
+                Content="&#xE740;" 
+                FontFamily="Segoe MDL2 Assets" 
+                FontSize="16"
+                Foreground="White"
+                Background="#30000000"
+                BorderThickness="0"
+                Width="40"
+                Height="40"
+                CornerRadius="20"
+                Click="FullScreenButton_Click"
+                ToolTipService.ToolTip="切换全屏 (F11)"/>
+        </StackPanel>
     </Grid>
 </Window>
