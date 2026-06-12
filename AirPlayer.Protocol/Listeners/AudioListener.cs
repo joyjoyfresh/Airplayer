@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
@@ -501,7 +501,7 @@ namespace AirPlayer.Protocol.Listeners
                 var hexDump = raw.Length >= 16 
                     ? BitConverter.ToString(raw, 0, Math.Min(16, raw.Length)) 
                     : BitConverter.ToString(raw);
-                Console.WriteLine($"[DEBUG-DECRYPT] #{_queueCallCount}: raw[0]=0x{raw[0]:X2}, len={raw.Length}, first16={hexDump}");
+                DiagLog.Write($"[AUDIO-Q] #{_queueCallCount}: seqnum={seqnum}, rawLen={raw.Length}, decoder={_decoder?.Type}, first16={hexDump}");
             }
             var length = _decoder.GetOutputStreamLength();
             var output = new byte[length];
@@ -703,7 +703,30 @@ namespace AirPlayer.Protocol.Listeners
             lock (_decoderLock)
             {
                 if (_decoder != null) return;
-                _decoder = new Decoders.NoOpDecoder();
+
+                // 根据协商的音频格式选择解码器
+                switch (session.AudioFormat)
+                {
+                    case Models.Enums.AudioFormat.AacMain:
+                    case Models.Enums.AudioFormat.AacEld:
+                        _decoder = new Decoders.AacDecoder();
+                        _decoder.Config(44100, 2, 16, session.AudioSamplesPerFrame > 0 ? session.AudioSamplesPerFrame : 1024);
+                        Console.WriteLine($"[AUDIO] 使用 AAC 解码器, format={session.AudioFormat}");
+                        break;
+                    case Models.Enums.AudioFormat.AppleLossless:
+                        // ALAC 解码器暂未实现，回退到 NoOp
+                        Console.WriteLine($"[AUDIO] ALAC 解码器暂未实现, format={session.AudioFormat}");
+                        _decoder = new Decoders.NoOpDecoder();
+                        break;
+                    case Models.Enums.AudioFormat.Pcm:
+                        _decoder = new Decoders.NoOpDecoder();
+                        Console.WriteLine($"[AUDIO] PCM 格式，无需解码");
+                        break;
+                    default:
+                        Console.WriteLine($"[AUDIO] 未知音频格式 {session.AudioFormat}，使用空解码器");
+                        _decoder = new Decoders.NoOpDecoder();
+                        break;
+                }
             }
         }
     }

@@ -10,6 +10,7 @@ using Microsoft.UI;
 using Windows.Graphics;
 using AirPlayer.Protocol;
 using AirPlayer.Protocol.Models;
+using AirPlayer.Protocol.Models.Audio;
 using AirPlayer.Protocol.Utils;
 using AirPlayer.App.Rendering;
 using System.Threading;
@@ -48,6 +49,9 @@ namespace AirPlayer.App
         private double _videoAspectRatio;
         private int _rotationDegrees; // 0 or 270 (toggle only)
         private H264Data? _pendingFirstFrame;         // 首帧 IDR 暂存，管线就绪后补投
+
+        // ===== 音频播放管线 =====
+        private AudioSink? _audioSink;                // 音频播放器
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -92,6 +96,8 @@ namespace AirPlayer.App
             _receiver.OnMirroringStartedReceived += Receiver_OnMirroringStarted;
             _receiver.OnMirroringStoppedReceived += Receiver_OnMirroringStopped;
             _receiver.OnH264DataReceived         += Receiver_OnH264DataReceived;
+            _receiver.OnPcmDataReceived          += Receiver_OnPcmDataReceived;
+            _receiver.OnAudioFlushReceived       += Receiver_OnAudioFlushReceived;
 
             Task.Run(async () =>
             {
@@ -119,6 +125,13 @@ namespace AirPlayer.App
                 _isMirroringActive = true;
                 _gotKeyframe       = false;
                 _firstFrameLogged  = false;
+
+                // 初始化音频播放器
+                if (_audioSink == null)
+                {
+                    _audioSink = new AudioSink();
+                    _audioSink.Initialize();
+                }
             });
         }
 
@@ -130,9 +143,27 @@ namespace AirPlayer.App
                 _isMirroringActive = false;
                 StopVideoPipeline();
 
+                // 释放音频播放器
+                _audioSink?.Dispose();
+                _audioSink = null;
+
                 SwapPanel.Visibility  = Visibility.Collapsed;
                 PromoGrid.Visibility  = Visibility.Visible;
             });
+        }
+
+        /// <summary>收到 PCM 音频帧时：投递到音频播放器</summary>
+        private void Receiver_OnPcmDataReceived(object? sender, PcmData pcmData)
+        {
+            if (!_isMirroringActive) return;
+            DiagLog.Write($"[UI-AUDIO] 收到 PCM 帧 len={pcmData.Length} pts={pcmData.Pts}");
+            _audioSink?.EnqueueFrame(pcmData);
+        }
+
+        /// <summary>音频刷新事件：清空播放队列</summary>
+        private void Receiver_OnAudioFlushReceived(object? sender, EventArgs e)
+        {
+            _audioSink?.Flush();
         }
 
         /// <summary>每收到一帧 H264 时：过滤后入队，首帧触发管线创建</summary>
@@ -483,6 +514,7 @@ namespace AirPlayer.App
             _cts?.Cancel();        // 停止 AirPlay 监听
             _receiver?.Dispose();  // 释放接收器
             StopVideoPipeline();   // 释放视频管线
+            _audioSink?.Dispose(); // 释放音频播放器
         }
     }
 }

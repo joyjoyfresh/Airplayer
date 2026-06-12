@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using AirPlayer.Protocol.Models;
+using AirPlayer.Protocol.Models.Audio;
 
 namespace AirPlayer.Protocol
 {
@@ -14,6 +15,10 @@ namespace AirPlayer.Protocol
         event EventHandler<decimal> OnSetVolumeReceived;
         /// <summary>H264 视频帧事件</summary>
         event EventHandler<H264Data> OnH264DataReceived;
+        /// <summary>PCM 音频帧事件</summary>
+        event EventHandler<PcmData> OnPcmDataReceived;
+        /// <summary>音频刷新事件（Seek / 跳转时触发）</summary>
+        event EventHandler OnAudioFlushReceived;
         /// <summary>镜像开始事件</summary>
         event EventHandler OnMirroringStartedReceived;
         /// <summary>镜像停止事件</summary>

@@ -17,6 +17,8 @@ namespace AirPlayer.Protocol
     {
         public event EventHandler<decimal>? OnSetVolumeReceived;
         public event EventHandler<H264Data>? OnH264DataReceived;
+        public event EventHandler<PcmData>? OnPcmDataReceived;
+        public event EventHandler? OnAudioFlushReceived;
         public event EventHandler? OnMirroringStartedReceived;
         public event EventHandler? OnMirroringStoppedReceived;
 
@@ -163,12 +165,12 @@ namespace AirPlayer.Protocol
 
         public void OnPCMData(PcmData pcmData)
         {
-            // v1 不处理音频，直接丢弃
+            OnPcmDataReceived?.Invoke(this, pcmData);
         }
 
         public void OnAudioFlush()
         {
-            // v1 不处理音频
+            OnAudioFlushReceived?.Invoke(this, EventArgs.Empty);
         }
 
         public void OnMirroringStarted()
