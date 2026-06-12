@@ -126,6 +126,8 @@ namespace AirPlayer.App
         {
             try
             {
+                AudioDiagLog.Write("[INIT] 开始初始化 AudioSink...");
+
                 // 波形格式：L16 PCM, 44100Hz, 2ch
                 var format = new WAVEFORMATEX
                 {
@@ -138,29 +140,31 @@ namespace AirPlayer.App
                     cbSize = 0
                 };
 
-                // 创建回调委托并固定
-                _callbackDelegate = WaveOutCallbackHandler;
-                IntPtr callbackPtr = Marshal.GetFunctionPointerForDelegate(_callbackDelegate);
-
-                int result = waveOutOpen(out _hWaveOut, -1 /* WAVE_MAPPER */, ref format, callbackPtr, IntPtr.Zero, CALLBACK_FUNCTION);
-                if (result != MMSYSERR_NOERROR)
-                {
-                    DiagLog.Write($"[AUDIO] waveOutOpen 失败: {result}");
-                    return;
-                }
-
-                // 分配缓冲区
+                // 先分配缓冲区，再打开 waveOut（避免回调在缓冲区分配前触发）
                 for (int i = 0; i < NUM_BUFFERS; i++)
                 {
                     _buffers[i] = new byte[BUFFER_SIZE_BYTES];
                     _bufferHandles[i] = GCHandle.Alloc(_buffers[i], GCHandleType.Pinned);
                 }
 
-                DiagLog.Write("[AUDIO] AudioSink 初始化完成 (waveOut)");
+                // 创建回调委托并固定
+                _callbackDelegate = WaveOutCallbackHandler;
+                IntPtr callbackPtr = Marshal.GetFunctionPointerForDelegate(_callbackDelegate);
+                AudioDiagLog.Write($"[INIT] 回调指针: 0x{callbackPtr.ToInt64():X}");
+
+                int result = waveOutOpen(out _hWaveOut, -1 /* WAVE_MAPPER */, ref format, callbackPtr, IntPtr.Zero, CALLBACK_FUNCTION);
+                AudioDiagLog.Write($"[INIT] waveOutOpen 结果: {result}, hWaveOut=0x{_hWaveOut.ToInt64():X}");
+                if (result != MMSYSERR_NOERROR)
+                {
+                    AudioDiagLog.Write($"[INIT] waveOutOpen 失败! 错误码: {result}");
+                    return;
+                }
+
+                AudioDiagLog.Write("[INIT] AudioSink 初始化完成 (waveOut)");
             }
             catch (Exception ex)
             {
-                DiagLog.Write($"[AUDIO] AudioSink 初始化异常: {ex.Message}");
+                AudioDiagLog.Write($"[INIT] AudioSink 初始化异常: {ex}");
             }
         }
 
@@ -172,14 +176,16 @@ namespace AirPlayer.App
         {
             if (_disposed || pcmData.Length <= 0) return;
 
-        DiagLog.Write($"[AUDIO-Q] EnqueueFrame len={pcmData.Length} pts={pcmData.Pts} queueCount={_frameQueue.Count}");
+            _enqueueCount++;
+            if (_enqueueCount <= 5 || _enqueueCount % 1000 == 0)
+                AudioDiagLog.Write($"[ENQ] #{_enqueueCount}: len={pcmData.Length} pts={pcmData.Pts} queue={_frameQueue.Count} hWaveOut=0x{_hWaveOut.ToInt64():X} playing={_isPlaying}");
 
             // 设置时间基准（首帧 PTS）
             if (!_basePtsSet && pcmData.Pts > 0)
             {
                 _basePts = pcmData.Pts;
                 _basePtsSet = true;
-                DiagLog.Write($"[AUDIO] 基准时钟设置: pts={pcmData.Pts}");
+                AudioDiagLog.Write($"[ENQ] 基准时钟设置: pts={pcmData.Pts}");
             }
 
             _frameQueue.Enqueue(pcmData);
@@ -192,7 +198,7 @@ namespace AirPlayer.App
                     if (!_isPlaying)
                     {
                         _isPlaying = true;
-                        DiagLog.Write("[AUDIO] 播放已启动");
+                        AudioDiagLog.Write("[ENQ] 播放已启动!");
                         // 开始填充缓冲区
                         FillAndQueueBuffers();
                     }
@@ -200,11 +206,12 @@ namespace AirPlayer.App
             }
             else if (!_isPlaying && _hWaveOut == IntPtr.Zero)
             {
-                // 仅记录前几次
-                if (_frameQueue.Count < 5)
-                    DiagLog.Write($"[AUDIO] 等待 waveOut 初始化... _hWaveOut={_hWaveOut}");
+                if (_enqueueCount <= 5)
+                    AudioDiagLog.Write($"[ENQ] 等待 waveOut 初始化... hWaveOut=0x{_hWaveOut.ToInt64():X}");
             }
         }
+
+        private long _enqueueCount;
 
         /// <summary>清空缓冲队列（Seek / Flush 时调用）</summary>
         public void Flush()
@@ -222,6 +229,24 @@ namespace AirPlayer.App
         }
 
         /// <summary>从队列中取出 PCM 数据，填充缓冲区并提交到 waveOut</summary>
+        private void FillAndQueueBuffers()
+        {
+            if (_disposed || _hWaveOut == IntPtr.Zero) return;
+
+            for (int i = 0; i < NUM_BUFFERS; i++)
+            {
+                if (!_bufferInUse[i])
+                {
+                    int bytesFilled = FillBuffer(_buffers[i]);
+                    if (bytesFilled > 0)
+                    {
+                        QueueBuffer(i, bytesFilled);
+                    }
+                }
+            }
+        }
+
+        /// <summary>从帧队列中取出数据填充一个缓冲区</summary>
         private int FillBuffer(byte[] buffer)
         {
             int offset = 0;
@@ -248,42 +273,14 @@ namespace AirPlayer.App
                 }
             }
 
-            if (offset > 0)
-                DiagLog.Write($"[AUDIO-FILL] 填充 {offset} 字节, {framesRead} 帧, 队列剩余 {_frameQueue.Count}");
+            _fillCount++;
+            if (offset > 0 && (_fillCount <= 5 || _fillCount % 500 == 0))
+                AudioDiagLog.Write($"[FILL] #{_fillCount}: 填充 {offset} 字节, {framesRead} 帧, 队列剩余 {_frameQueue.Count}");
 
             return offset;
         }
-                }
-            }
-        }
 
-        /// <summary>从帧队列中取出数据填充一个缓冲区</summary>
-        private int FillBuffer(byte[] buffer)
-        {
-            int offset = 0;
-
-            while (offset < buffer.Length && _frameQueue.TryDequeue(out var pcmData))
-            {
-                int bytesToCopy = Math.Min(pcmData.Length, buffer.Length - offset);
-                Array.Copy(pcmData.Data, 0, buffer, offset, bytesToCopy);
-                offset += bytesToCopy;
-
-                // 如果 pcmData 有剩余数据，放回队列（创建新的 PcmData）
-                if (bytesToCopy < pcmData.Length)
-                {
-                    var remaining = new PcmData
-                    {
-                        Data = new byte[pcmData.Length - bytesToCopy],
-                        Length = pcmData.Length - bytesToCopy,
-                        Pts = pcmData.Pts
-                    };
-                    Array.Copy(pcmData.Data, bytesToCopy, remaining.Data, 0, remaining.Length);
-                    _frameQueue.Enqueue(remaining);
-                }
-            }
-
-            return offset;
-        }
+        private long _fillCount;
 
         /// <summary>将填充好的缓冲区提交到 waveOut</summary>
         private void QueueBuffer(int bufferIndex, int byteCount)
@@ -305,7 +302,7 @@ namespace AirPlayer.App
             int prepareResult = waveOutPrepareHeader(_hWaveOut, ref hdr, Marshal.SizeOf<WAVEHDR>());
             if (prepareResult != MMSYSERR_NOERROR)
             {
-                DiagLog.Write($"[AUDIO] waveOutPrepareHeader 失败: {prepareResult}");
+                AudioDiagLog.Write($"[QUEUE] waveOutPrepareHeader 失败: {prepareResult}");
                 return;
             }
 
@@ -314,15 +311,25 @@ namespace AirPlayer.App
             int writeResult = waveOutWrite(_hWaveOut, ref hdr, Marshal.SizeOf<WAVEHDR>());
             if (writeResult != MMSYSERR_NOERROR)
             {
-                DiagLog.Write($"[AUDIO] waveOutWrite 失败: {writeResult}");
+                AudioDiagLog.Write($"[QUEUE] waveOutWrite 失败: {writeResult}");
                 _bufferInUse[bufferIndex] = false;
                 waveOutUnprepareHeader(_hWaveOut, ref hdr, Marshal.SizeOf<WAVEHDR>());
             }
+            else
+            {
+                _queueCount++;
+                if (_queueCount <= 5 || _queueCount % 500 == 0)
+                    AudioDiagLog.Write($"[QUEUE] #{_queueCount}: 提交缓冲区[{bufferIndex}] {byteCount} 字节");
+            }
         }
+
+        private long _queueCount;
 
         /// <summary>waveOut 回调：缓冲区播放完成时触发</summary>
         private void WaveOutCallbackHandler(IntPtr hWaveOut, int uMsg, IntPtr dwInstance, ref WAVEHDR wParam, ref WAVEHDR lParam)
         {
+            _callbackCount++;
+
             if (uMsg == 0x3C00 /* WOM_DONE */)
             {
                 // 找到对应的缓冲区索引
@@ -345,7 +352,12 @@ namespace AirPlayer.App
                     }
                 }
             }
+
+            if (_callbackCount <= 5 || _callbackCount % 500 == 0)
+                AudioDiagLog.Write($"[CB] #{_callbackCount}: uMsg=0x{uMsg:X4}");
         }
+
+        private long _callbackCount;
 
         public void Dispose()
         {

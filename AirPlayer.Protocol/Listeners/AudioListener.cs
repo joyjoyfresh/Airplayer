@@ -501,17 +501,17 @@ namespace AirPlayer.Protocol.Listeners
                 var hexDump = raw.Length >= 16 
                     ? BitConverter.ToString(raw, 0, Math.Min(16, raw.Length)) 
                     : BitConverter.ToString(raw);
-                DiagLog.Write($"[AUDIO-Q] #{_queueCallCount}: seqnum={seqnum}, rawLen={raw.Length}, decoder={_decoder?.Type}, first16={hexDump}");
+                DiagLog.Write($"[BUF-Q] #{_queueCallCount}: seqnum={seqnum}, rawLen={raw.Length}, decoder={_decoder?.Type}, first16={hexDump}");
             }
             var length = _decoder.GetOutputStreamLength();
             var output = new byte[length];
 
             var res = _decoder.DecodeFrame(raw, ref output, length);
-            if (res != 0)
+            if (res != 0 && res != -1)
             {
                 output = new byte[length];
                 if (_queueCallCount <= 10 || _queueCallCount % 200 == 0)
-                    Console.WriteLine($"[DEBUG-DECODE] #{_queueCallCount}: ERROR decoder={_decoder.Type}, code=0x{res:X} ({res}), inputLen={raw.Length}, outputLen={length}");
+                    DiagLog.Write($"[BUF-DECODE] #{_queueCallCount}: ERROR decoder={_decoder.Type}, code=0x{res:X} ({res}), inputLen={raw.Length}, outputLen={length}");
             }
             else
             {
@@ -523,7 +523,7 @@ namespace AirPlayer.Protocol.Listeners
                     {
                         if (output[i] != 0) { isSilence = false; break; }
                     }
-                    Console.WriteLine($"[DEBUG-DECODE] #{_queueCallCount}: OK decoder={_decoder.Type}, inputLen={raw.Length}, outputLen={length}, silence={isSilence}");
+                    DiagLog.Write($"[BUF-DECODE] #{_queueCallCount}: OK decoder={_decoder.Type}, inputLen={raw.Length}, outputLen={length}, actualOut={res}, silence={isSilence}");
                 }
             }
 
@@ -704,26 +704,29 @@ namespace AirPlayer.Protocol.Listeners
             {
                 if (_decoder != null) return;
 
+                DiagLog.Write($"[DEC] 初始化解码器, format={session.AudioFormat}, spf={session.AudioSamplesPerFrame}");
+
                 // 根据协商的音频格式选择解码器
                 switch (session.AudioFormat)
                 {
                     case Models.Enums.AudioFormat.AacMain:
                     case Models.Enums.AudioFormat.AacEld:
                         _decoder = new Decoders.AacDecoder();
-                        _decoder.Config(44100, 2, 16, session.AudioSamplesPerFrame > 0 ? session.AudioSamplesPerFrame : 1024);
-                        Console.WriteLine($"[AUDIO] 使用 AAC 解码器, format={session.AudioFormat}");
+                        int spf = session.AudioSamplesPerFrame > 0 ? session.AudioSamplesPerFrame : 1024;
+                        var cfgResult = _decoder.Config(44100, 2, 16, spf);
+                        DiagLog.Write($"[DEC] AAC 解码器已创建, format={session.AudioFormat}, configResult={cfgResult}");
                         break;
                     case Models.Enums.AudioFormat.AppleLossless:
                         // ALAC 解码器暂未实现，回退到 NoOp
-                        Console.WriteLine($"[AUDIO] ALAC 解码器暂未实现, format={session.AudioFormat}");
+                        DiagLog.Write($"[DEC] ALAC 解码器暂未实现, format={session.AudioFormat}");
                         _decoder = new Decoders.NoOpDecoder();
                         break;
                     case Models.Enums.AudioFormat.Pcm:
                         _decoder = new Decoders.NoOpDecoder();
-                        Console.WriteLine($"[AUDIO] PCM 格式，无需解码");
+                        DiagLog.Write($"[DEC] PCM 格式，无需解码");
                         break;
                     default:
-                        Console.WriteLine($"[AUDIO] 未知音频格式 {session.AudioFormat}，使用空解码器");
+                        DiagLog.Write($"[DEC] 未知音频格式 {session.AudioFormat}，使用空解码器");
                         _decoder = new Decoders.NoOpDecoder();
                         break;
                 }

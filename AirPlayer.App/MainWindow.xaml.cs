@@ -156,9 +156,13 @@ namespace AirPlayer.App
         private void Receiver_OnPcmDataReceived(object? sender, PcmData pcmData)
         {
             if (!_isMirroringActive) return;
-            DiagLog.Write($"[UI-AUDIO] 收到 PCM 帧 len={pcmData.Length} pts={pcmData.Pts}");
+            if (_pcmFrameCount <= 5 || _pcmFrameCount % 1000 == 0)
+                AudioDiagLog.Write($"[UI-PCM] #{_pcmFrameCount}: len={pcmData.Length} pts={pcmData.Pts} sink={(_audioSink != null ? "ok" : "null")}");
+            _pcmFrameCount++;
             _audioSink?.EnqueueFrame(pcmData);
         }
+
+        private long _pcmFrameCount;
 
         /// <summary>音频刷新事件：清空播放队列</summary>
         private void Receiver_OnAudioFlushReceived(object? sender, EventArgs e)

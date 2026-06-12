@@ -17,7 +17,12 @@ namespace AirPlayer.Protocol.Utils
             while (dir != null)
             {
                 if (File.Exists(Path.Combine(dir.FullName, "Airplayer.sln")))
+                {
+                    var protocolDir = Path.Combine(dir.FullName, "AirPlayer.Protocol");
+                    if (Directory.Exists(protocolDir))
+                        return Path.Combine(protocolDir, "airplay-video.log");
                     return Path.Combine(dir.FullName, "airplay-video.log");
+                }
                 dir = dir.Parent;
             }
             return Path.Combine(AppContext.BaseDirectory, "airplay-video.log");
