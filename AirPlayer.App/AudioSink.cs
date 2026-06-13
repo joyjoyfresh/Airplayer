@@ -4,64 +4,119 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using AirPlayer.Protocol.Models.Audio;
 using AirPlayer.Protocol.Utils;
-using Windows.Media.Audio;
-using Windows.Media.Render;
-using Windows.Devices.Enumeration;
-using Windows.Media;
-using Windows.Media.MediaProperties;
 
 namespace AirPlayer.App
 {
-    [ComImport]
-    [Guid("5B0D3235-4DBE-4DFA-8240-C7396FDE4115")]
-    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    internal interface IMemoryBufferByteAccess
-    {
-        unsafe void GetBuffer(out byte* buffer, out uint capacity);
-    }
-
     /// <summary>
-    /// 音频播放器：接收解码后的 PCM 帧，通过 Windows WASAPI / AudioGraph API 低延迟播放。
+    /// 音频播放器：接收解码后的 PCM 帧，通过 waveOut API 低延迟播放。
+    /// 使用 8 个轮转缓冲区（每个约 23ms），轮询 WHDR_DONE 标志进行调度。
     /// </summary>
     public sealed class AudioSink : IDisposable
     {
-        // PCM 参数（AirPlay 固定 44100Hz, 2ch, 16-bit）
-        private const int SAMPLE_RATE = 44100;
-        private const int CHANNELS = 2;
-        private const int BITS_PER_SAMPLE = 16;
-        private const int BLOCK_ALIGN = CHANNELS * BITS_PER_SAMPLE / 8; // 4 字节/帧
+        #region WinMM P/Invoke
 
-        // 待播队列最大积压字节数（≈150ms）；超出则丢弃最旧帧以保持音画同步
+        private const int  WAVE_MAPPER      = -1;       // 系统默认音频输出设备
+        private const int  CALLBACK_NULL    = 0;        // 无回调（轮询模式）
+        private const uint WHDR_DONE        = 0x00000001; // 缓冲区已播放完毕
+        private const uint WHDR_PREPARED    = 0x00000002; // 缓冲区已 Prepare
+        private const int  MMSYSERR_NOERROR = 0;         // 成功返回值
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WAVEFORMATEX
+        {
+            public ushort wFormatTag;       // 格式标识：1 = PCM
+            public ushort nChannels;        // 声道数
+            public uint   nSamplesPerSec;   // 采样率（Hz）
+            public uint   nAvgBytesPerSec;  // 平均字节率
+            public ushort nBlockAlign;      // 块对齐（字节/帧）
+            public ushort wBitsPerSample;   // 位深度
+            public ushort cbSize;           // 扩展字节数（PCM 置 0）
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WAVEHDR
+        {
+            public IntPtr lpData;           // 指向数据缓冲区
+            public uint   dwBufferLength;   // 数据长度（字节）
+            public uint   dwBytesRecorded;  // 录制字节数（播放时忽略）
+            public IntPtr dwUser;           // 用户自定义数据
+            public uint   dwFlags;          // 标志位（WHDR_DONE 等）
+            public uint   dwLoops;          // 循环次数（0 = 不循环）
+            public IntPtr lpNext;           // 内部链表指针（保留）
+            public IntPtr reserved;         // 保留
+        }
+
+        [DllImport("winmm.dll")]
+        private static extern int waveOutOpen(
+            out IntPtr hWaveOut, int uDeviceID,
+            ref WAVEFORMATEX lpFormat,
+            IntPtr dwCallback, IntPtr dwInstance, int fdwOpen);
+
+        [DllImport("winmm.dll")]
+        private static extern int waveOutPrepareHeader(
+            IntPtr hWaveOut, IntPtr lpWaveOutHdr, int uSize);
+
+        [DllImport("winmm.dll")]
+        private static extern int waveOutUnprepareHeader(
+            IntPtr hWaveOut, IntPtr lpWaveOutHdr, int uSize);
+
+        [DllImport("winmm.dll")]
+        private static extern int waveOutWrite(
+            IntPtr hWaveOut, IntPtr lpWaveOutHdr, int uSize);
+
+        [DllImport("winmm.dll")]
+        private static extern int waveOutReset(IntPtr hWaveOut);
+
+        [DllImport("winmm.dll")]
+        private static extern int waveOutClose(IntPtr hWaveOut);
+
+        #endregion
+
+        // ──────────────────────────── 音频参数 ────────────────────────────
+
+        private const int  SAMPLE_RATE     = 44100; // 采样率（AirPlay 固定）
+        private const int  CHANNELS        = 2;     // 立体声
+        private const int  BITS_PER_SAMPLE = 16;    // 16-bit PCM
+        private const int  BLOCK_ALIGN     = CHANNELS * BITS_PER_SAMPLE / 8; // 4 字节/帧
+
+        // ──────────────────────────── 缓冲区配置 ──────────────────────────
+
+        // 8 个轮转缓冲区，每个 4096 字节 ≈ 23ms；
+        // AAC-ELD 每帧 1920 字节（480 样本），不足时补静音填满整个缓冲区
+        private const int BUFFER_COUNT   = 8;    // 轮转缓冲区数量
+        private const int BUFFER_BYTES   = 4096; // 每个缓冲区字节数（约 23ms）
+
+        // ──────────────────────────── 原生资源 ────────────────────────────
+
+        private IntPtr   _hWaveOut = IntPtr.Zero; // waveOut 设备句柄
+        private readonly IntPtr[] _hdrPtrs  = new IntPtr[BUFFER_COUNT]; // WAVEHDR 原生内存指针
+        private readonly IntPtr[] _dataPtrs = new IntPtr[BUFFER_COUNT]; // 数据区原生内存指针
+        private int _nextBuf; // 下一个待写入的缓冲区槽位
+
+        // ──────────────────────────── 队列与状态 ──────────────────────────
+
+        private readonly ConcurrentQueue<PcmData> _frameQueue = new(); // 待播 PCM 队列
+        private long _queuedBytes;  // 队列积压字节数
+        // 最大积压约 150ms，超出则丢弃旧帧以保持实时性
         private const int MAX_QUEUED_BYTES = (int)(SAMPLE_RATE * BLOCK_ALIGN * 0.15);
 
-        // AudioGraph 实例
-        private AudioGraph? _audioGraph;
-        private AudioFrameInputNode? _frameInputNode;
-        private readonly string? _preferredDeviceId;
-        private volatile bool _isInitialized;
+        private Thread?          _playbackThread; // 播放工作线程
+        private volatile bool    _running;        // 线程运行标志
+        private bool             _initialized;    // 是否已成功初始化
+        private bool             _disposed;       // 是否已释放
+        private readonly AutoResetEvent _dataEvent = new(false); // 唤醒播放线程
+        private readonly string? _preferredDeviceId; // 首选设备 ID（目前 waveOut 不支持按 ID 选设备，保留字段）
 
-        // 实例状态
-        private bool _disposed;
-        private volatile bool _running;
-        private bool _isPlaying;
+        // ──────────────────────────── PTS 时钟 ────────────────────────────
 
-        // 待播队列与积压计数
-        private readonly ConcurrentQueue<PcmData> _frameQueue = new();
-        private long _queuedBytes;
-        private readonly object _lock = new();
+        private ulong _basePts;           // 首帧 PTS（NTP 微秒）
+        private bool  _basePtsSet;        // 是否已设置时间基准
+        private long  _totalSamplesPlayed; // 累计已播样本数
 
-        // 唤醒事件与线程
-        private readonly AutoResetEvent _dataEvent = new(false);
-        private Thread? _playbackThread;
+        // ──────────────────────────── 诊断计数 ────────────────────────────
 
-        // PTS 时钟
-        private ulong _basePts;
-        private bool _basePtsSet;
-        private long _totalSamplesPlayed;
-
-        // 调试计数
-        private long _enqueueCount;
-        private long _queueCount;
+        private long _enqueueCount; // 入队帧计数
+        private long _submitCount;  // 提交 waveOut 次数
 
         /// <summary>当前音频时钟（微秒，NTP epoch）— 供视频同步参考</summary>
         public ulong CurrentClock => _basePtsSet
@@ -69,334 +124,284 @@ namespace AirPlayer.App
             : 0;
 
         /// <summary>音频是否已开始播放</summary>
-        public bool IsPlaying => _isPlaying;
+        public bool IsPlaying { get; private set; }
 
         public AudioSink(string? deviceId = null)
         {
-            _preferredDeviceId = deviceId;
+            _preferredDeviceId = deviceId; // 保留字段，waveOut 暂不支持按 DeviceId 选择
         }
 
-        /// <summary>初始化音频播放器并启动播放线程与 AudioGraph。</summary>
+        /// <summary>初始化 waveOut 设备并分配缓冲区，启动播放线程。</summary>
         public void Initialize()
         {
             try
             {
-                AudioDiagLog.Write("[INIT] 开始初始化 AudioSink (AudioGraph)...");
+                AudioDiagLog.Write("[INIT] 开始初始化 AudioSink (waveOut)...");
 
-                _running = true;
+                // 打开 waveOut 设备（WAVE_MAPPER = 系统默认）
+                var fmt = new WAVEFORMATEX
+                {
+                    wFormatTag     = 1, // WAVE_FORMAT_PCM
+                    nChannels      = CHANNELS,
+                    nSamplesPerSec = SAMPLE_RATE,
+                    nAvgBytesPerSec = (uint)(SAMPLE_RATE * BLOCK_ALIGN),
+                    nBlockAlign    = BLOCK_ALIGN,
+                    wBitsPerSample = BITS_PER_SAMPLE,
+                    cbSize         = 0
+                };
+
+                int mm = waveOutOpen(out _hWaveOut, WAVE_MAPPER, ref fmt,
+                                     IntPtr.Zero, IntPtr.Zero, CALLBACK_NULL);
+                if (mm != MMSYSERR_NOERROR)
+                {
+                    AudioDiagLog.Write($"[INIT] waveOutOpen 失败: {mm}");
+                    return;
+                }
+
+                // 分配原生内存：WAVEHDR + 数据区；初始化 WHDR_DONE 使槽位标记为"可用"
+                int hdrSize = Marshal.SizeOf<WAVEHDR>();
+                for (int i = 0; i < BUFFER_COUNT; i++)
+                {
+                    // 分配静音数据缓冲区
+                    _dataPtrs[i] = Marshal.AllocHGlobal(BUFFER_BYTES);
+                    ZeroMemory(_dataPtrs[i], BUFFER_BYTES);
+
+                    // 分配并初始化 WAVEHDR
+                    _hdrPtrs[i] = Marshal.AllocHGlobal(hdrSize);
+                    var hdr = new WAVEHDR
+                    {
+                        lpData         = _dataPtrs[i],
+                        dwBufferLength = (uint)BUFFER_BYTES,
+                        dwFlags        = WHDR_DONE // 初始标记已完成，表示该槽位可立即使用
+                    };
+                    Marshal.StructureToPtr(hdr, _hdrPtrs[i], false);
+                }
+
+                _initialized = true;
+                _running     = true;
+
                 _playbackThread = new Thread(PlaybackLoop)
                 {
                     IsBackground = true,
-                    Name = "AudioPlayback"
+                    Name         = "AudioPlayback"
                 };
                 _playbackThread.Start();
 
-                // 异步启动 AudioGraph 的创建和配置
-                System.Threading.Tasks.Task.Run(async () =>
-                {
-                    try
-                    {
-                        await InitializeAudioGraphAsync();
-                    }
-                    catch (Exception ex)
-                    {
-                        AudioDiagLog.Write($"[INIT] AudioGraph 初始化异常: {ex}");
-                    }
-                });
+                AudioDiagLog.Write("[INIT] waveOut AudioSink 初始化完成，播放线程已启动");
             }
             catch (Exception ex)
             {
-                AudioDiagLog.Write($"[INIT] AudioSink 初始化发生异常: {ex}");
+                AudioDiagLog.Write($"[INIT] AudioSink 初始化异常: {ex}");
             }
         }
 
-        private async System.Threading.Tasks.Task InitializeAudioGraphAsync()
-        {
-            AudioDiagLog.Write("[INIT] 异步初始化 AudioGraph...");
-
-            var settings = new AudioGraphSettings(AudioRenderCategory.Media)
-            {
-                QuantumSizeSelectionMode = QuantumSizeSelectionMode.LowestLatency
-            };
-
-            if (!string.IsNullOrEmpty(_preferredDeviceId))
-            {
-                try
-                {
-                    var device = await DeviceInformation.CreateFromIdAsync(_preferredDeviceId);
-                    settings.PrimaryRenderDevice = device;
-                    AudioDiagLog.Write($"[INIT] 使用指定的音频播放设备: {device.Name}");
-                }
-                catch (Exception ex)
-                {
-                    AudioDiagLog.Write($"[INIT] 创建指定设备失败，回退到默认设备: {ex.Message}");
-                }
-            }
-            else
-            {
-                AudioDiagLog.Write("[INIT] 未指定设备，使用系统默认输出设备");
-            }
-
-            var createResult = await AudioGraph.CreateAsync(settings);
-            if (createResult.Status != AudioGraphCreationStatus.Success)
-            {
-                AudioDiagLog.Write($"[INIT] AudioGraph 创建失败: {createResult.Status}");
-                return;
-            }
-
-            _audioGraph = createResult.Graph;
-
-            // 16-bit PCM, 44100Hz, 2ch
-            var encodingProperties = AudioEncodingProperties.CreatePcm(SAMPLE_RATE, CHANNELS, BITS_PER_SAMPLE);
-            _frameInputNode = _audioGraph.CreateFrameInputNode(encodingProperties);
-
-            // 创建物理输出节点
-            var outputNodeResult = await _audioGraph.CreateDeviceOutputNodeAsync();
-            if (outputNodeResult.Status != AudioDeviceNodeCreationStatus.Success)
-            {
-                AudioDiagLog.Write($"[INIT] 创建音频设备输出节点失败: {outputNodeResult.Status}");
-                return;
-            }
-
-            // 连接到物理设备输出节点
-            _frameInputNode.AddOutgoingConnection(outputNodeResult.DeviceOutputNode);
-
-            // 启动音频图播放
-            _audioGraph.Start();
-
-            lock (_lock)
-            {
-                _isInitialized = true;
-            }
-
-            AudioDiagLog.Write("[INIT] AudioGraph 初始化完成并已启动");
-        }
-
-        /// <summary>投递一帧 PCM 数据到播放队列（协议层线程调用，线程安全）。</summary>
+        /// <summary>投递一帧 PCM 数据到播放队列（线程安全）。</summary>
         public void EnqueueFrame(PcmData pcmData)
         {
             if (_disposed || pcmData == null || pcmData.Length <= 0) return;
 
             _enqueueCount++;
 
-            // 设置时间基准（首帧 PTS）
+            // 首帧 PTS 作为时间基准
             if (!_basePtsSet && pcmData.Pts > 0)
             {
-                _basePts = pcmData.Pts;
+                _basePts    = pcmData.Pts;
                 _basePtsSet = true;
             }
 
             _frameQueue.Enqueue(pcmData);
             Interlocked.Add(ref _queuedBytes, pcmData.Length);
 
-            // 积压过多则丢弃最旧帧，保持音频贴近实时（与视频最新帧对齐 → 音画同步）
+            // 积压过多则丢弃最旧帧，保持音频贴近实时
             int dropped = 0;
-            while (Interlocked.Read(ref _queuedBytes) > MAX_QUEUED_BYTES && _frameQueue.TryDequeue(out var old))
+            while (Interlocked.Read(ref _queuedBytes) > MAX_QUEUED_BYTES &&
+                   _frameQueue.TryDequeue(out var old))
             {
                 Interlocked.Add(ref _queuedBytes, -old.Length);
                 dropped++;
             }
             if (dropped > 0 && (_enqueueCount <= 10 || _enqueueCount % 500 == 0))
-                AudioDiagLog.Write($"[ENQ] #{_enqueueCount}: 丢弃 {dropped} 旧帧以保持同步, 队列={_frameQueue.Count}");
+                AudioDiagLog.Write($"[ENQ] #{_enqueueCount}: 丢弃 {dropped} 旧帧，保持实时");
 
             if (_enqueueCount <= 5)
                 AudioDiagLog.Write($"[ENQ] #{_enqueueCount}: len={pcmData.Length} queued={Interlocked.Read(ref _queuedBytes)}");
 
-            // 唤醒播放线程
-            _dataEvent.Set();
+            _dataEvent.Set(); // 唤醒播放线程
         }
 
-        /// <summary>清空缓冲队列</summary>
+        /// <summary>清空待播队列（SETUP/TEARDOWN 时调用）。</summary>
         public void Flush()
         {
-            lock (_lock)
-            {
-                while (_frameQueue.TryDequeue(out _)) { }
-                Interlocked.Exchange(ref _queuedBytes, 0);
-
-                // WASAPI/AudioGraph 在清空队列后，无需手动 DiscardAllFrames。
-                // 停止送数后，底层会自动将已排队但未来得及播出的少量样本播完并静音。
-            }
+            while (_frameQueue.TryDequeue(out _)) { }
+            Interlocked.Exchange(ref _queuedBytes, 0);
             DiagLog.Write("[AUDIO] 队列已清空");
         }
 
-        /// <summary>播放工作线程：维持 AudioFrameInputNode 的缓冲水位，防止断流并保障低延迟。</summary>
+        // ──────────────────────────── 播放线程 ────────────────────────────
+
+        /// <summary>
+        /// 播放工作线程：从队列取 PCM 帧，写入轮转缓冲区，提交到 waveOut。
+        /// 在提交下一帧前轮询 WHDR_DONE 确认缓冲区已播放完毕。
+        /// </summary>
         private void PlaybackLoop()
         {
-            AudioDiagLog.Write("[PLAY] 播放线程启动");
+            AudioDiagLog.Write("[PLAY] 播放线程启动 (waveOut)");
+            int hdrSize  = Marshal.SizeOf<WAVEHDR>();
             var lastStat = DateTime.UtcNow;
-            var startTime = DateTime.UtcNow;
+            int noPcmWarnSecs = 6;
             bool noPcmWarned = false;
 
             while (_running && !_disposed)
             {
-                bool didWork = false;
-                AudioFrameInputNode? node = null;
-                bool initialized = false;
-
-                lock (_lock)
+                // ── 取帧 ──────────────────────────────────────────────────
+                if (!_frameQueue.TryDequeue(out var pcmData))
                 {
-                    initialized = _isInitialized;
-                    node = _frameInputNode;
-                }
-
-                if (initialized && node != null)
-                {
-                    // 缓冲控制目标：在 node 内部保持大约 20ms - 40ms 的待播放样本
-                    // 44100Hz 时，20ms ≈ 882 个样本，40ms ≈ 1764 个样本
-                    // 如果 node 的排队样本小于 20ms 且队列中有数据，则继续填充，直到达到 40ms
-                    while (_running && !_disposed && node.QueuedSampleCount < 1764)
+                    // 诊断：长时间无音频
+                    if (!noPcmWarned && _enqueueCount == 0 &&
+                        (DateTime.UtcNow - lastStat).TotalSeconds >= noPcmWarnSecs)
                     {
-                        if (_frameQueue.TryDequeue(out var pcmData))
-                        {
-                            Interlocked.Add(ref _queuedBytes, -pcmData.Length);
-                            SubmitFrameToNode(node, pcmData);
-                            didWork = true;
-
-                            if (!_isPlaying)
-                            {
-                                _isPlaying = true;
-                                AudioDiagLog.Write("[PLAY] 播放已启动!");
-                            }
-                        }
-                        else
-                        {
-                            break; // 队列空，跳出
-                        }
+                        noPcmWarned = true;
+                        AudioDiagLog.Write("==================================================================");
+                        AudioDiagLog.Write("[诊断] 播放线程已运行，但至今未收到任何 PCM 音频帧。");
+                        AudioDiagLog.Write("==================================================================");
                     }
+                    _dataEvent.WaitOne(5);
+                    continue;
                 }
+                Interlocked.Add(ref _queuedBytes, -pcmData.Length);
 
-                // 诊断：长时间未接收到 PCM
-                if (!noPcmWarned && _enqueueCount == 0 && (DateTime.UtcNow - startTime).TotalSeconds >= 6)
+                if (!_initialized || _hWaveOut == IntPtr.Zero) continue;
+
+                // ── 等待当前槽位的缓冲区被 waveOut 播放完毕 ──────────────
+                int spinMs = 0;
+                while (_running && !_disposed)
                 {
-                    noPcmWarned = true;
-                    AudioDiagLog.Write("==================================================================");
-                    AudioDiagLog.Write("[诊断] 播放线程已运行，但至今未收到任何一帧 PCM 音频。");
-                    AudioDiagLog.Write("==================================================================");
+                    var hdr = Marshal.PtrToStructure<WAVEHDR>(_hdrPtrs[_nextBuf]);
+                    if ((hdr.dwFlags & WHDR_DONE) != 0) break; // 已完成，可重用
+                    Thread.Sleep(1);
+                    spinMs++;
+                    if (spinMs % 100 == 0)
+                        AudioDiagLog.Write($"[PLAY] 等待缓冲区槽 {_nextBuf} 释放（已等 {spinMs}ms）...");
+                }
+                if (!_running || _disposed) break;
+
+                // ── 释放旧的 Prepare（如果有）────────────────────────────
+                {
+                    var hdr = Marshal.PtrToStructure<WAVEHDR>(_hdrPtrs[_nextBuf]);
+                    if ((hdr.dwFlags & WHDR_PREPARED) != 0)
+                        waveOutUnprepareHeader(_hWaveOut, _hdrPtrs[_nextBuf], hdrSize);
                 }
 
-                // 每 2 秒输出一次运行统计
-                if (_isPlaying && (DateTime.UtcNow - lastStat).TotalSeconds >= 2)
+                // ── 拷入 PCM 数据；不足 BUFFER_BYTES 的部分补静音 ─────────
+                int copyLen = Math.Min(pcmData.Length, BUFFER_BYTES);
+                Marshal.Copy(pcmData.Data, 0, _dataPtrs[_nextBuf], copyLen);
+                if (copyLen < BUFFER_BYTES)
+                    ZeroMemory(_dataPtrs[_nextBuf] + copyLen, BUFFER_BYTES - copyLen);
+
+                // ── 更新 WAVEHDR 并提交 ────────────────────────────────────
+                var newHdr = new WAVEHDR
+                {
+                    lpData         = _dataPtrs[_nextBuf],
+                    dwBufferLength = (uint)copyLen, // 只播实际有效字节
+                    dwFlags        = 0
+                };
+                Marshal.StructureToPtr(newHdr, _hdrPtrs[_nextBuf], false);
+
+                int pr = waveOutPrepareHeader(_hWaveOut, _hdrPtrs[_nextBuf], hdrSize);
+                if (pr != MMSYSERR_NOERROR)
+                {
+                    AudioDiagLog.Write($"[PLAY] waveOutPrepareHeader 失败: {pr}");
+                    _nextBuf = (_nextBuf + 1) % BUFFER_COUNT;
+                    continue;
+                }
+
+                int wr = waveOutWrite(_hWaveOut, _hdrPtrs[_nextBuf], hdrSize);
+                if (wr != MMSYSERR_NOERROR)
+                {
+                    AudioDiagLog.Write($"[PLAY] waveOutWrite 失败: {wr}");
+                }
+                else
+                {
+                    _submitCount++;
+                    if (!IsPlaying)
+                    {
+                        IsPlaying = true;
+                        AudioDiagLog.Write("[PLAY] 播放已启动！");
+                    }
+                    Interlocked.Add(ref _totalSamplesPlayed, copyLen / BLOCK_ALIGN);
+
+                    if (_submitCount <= 5 || _submitCount % 500 == 0)
+                        AudioDiagLog.Write($"[PLAY] #{_submitCount}: 提交 {copyLen} 字节 / 槽{_nextBuf} / 队列积压={Interlocked.Read(ref _queuedBytes)}");
+                }
+
+                // ── 每 2 秒输出一次健康统计 ───────────────────────────────
+                if (IsPlaying && (DateTime.UtcNow - lastStat).TotalSeconds >= 2)
                 {
                     lastStat = DateTime.UtcNow;
-                    uint queuedNodeSamples = node != null ? (uint)node.QueuedSampleCount : 0;
-                    AudioDiagLog.Write($"[PLAY] WASAPI 健康度: 队列字节={Interlocked.Read(ref _queuedBytes)} 节点积压样本={queuedNodeSamples} 已播样本={Interlocked.Read(ref _totalSamplesPlayed)} 提交={_queueCount}");
+                    AudioDiagLog.Write($"[PLAY] 统计: 提交={_submitCount} 已播样本={Interlocked.Read(ref _totalSamplesPlayed)} 队列积压={Interlocked.Read(ref _queuedBytes)}");
                 }
 
-                if (!didWork)
-                {
-                    // 避免 CPU 占满，如果没有处理数据或者缓冲已经填满，休眠等待
-                    _dataEvent.WaitOne(5);
-                }
+                _nextBuf = (_nextBuf + 1) % BUFFER_COUNT; // 移动到下一个槽位
             }
 
             AudioDiagLog.Write("[PLAY] 播放线程退出");
         }
 
-        private void SubmitFrameToNode(AudioFrameInputNode node, PcmData pcmData)
-        {
-            try
-            {
-                uint byteCount = (uint)pcmData.Length;
-                var frame = new AudioFrame(byteCount);
-
-                using (var audioBuffer = frame.LockBuffer(AudioBufferAccessMode.Write))
-                using (var reference = audioBuffer.CreateReference())
-                {
-                    // 在 .NET 8 / CsWinRT 环境中，reference (IMemoryBufferReference) 无法直接转换为 IMemoryBufferByteAccess。
-                    // 必须通过低级别 COM 的 QueryInterface 获取原生 IUnknown 指针来进行转换。
-                    IntPtr pUnknown = Marshal.GetIUnknownForObject(reference);
-                    try
-                    {
-                        Guid guid = new Guid("5B0D3235-4DBE-4DFA-8240-C7396FDE4115");
-                        int hr = Marshal.QueryInterface(pUnknown, ref guid, out IntPtr pByteAccess);
-                        if (hr == 0)
-                        {
-                            try
-                            {
-                                var byteAccess = (IMemoryBufferByteAccess)Marshal.GetObjectForIUnknown(pByteAccess);
-                                unsafe
-                                {
-                                    byte* pBuffer;
-                                    uint capacity;
-                                    byteAccess.GetBuffer(out pBuffer, out capacity);
-
-                                    int copyLen = Math.Min((int)capacity, pcmData.Length);
-                                    Marshal.Copy(pcmData.Data, 0, (IntPtr)pBuffer, copyLen);
-                                }
-                            }
-                            finally
-                            {
-                                Marshal.Release(pByteAccess);
-                            }
-                        }
-                        else
-                        {
-                            throw new COMException("QueryInterface for IMemoryBufferByteAccess failed", hr);
-                        }
-                    }
-                    finally
-                    {
-                        Marshal.Release(pUnknown);
-                    }
-                }
-
-                int sampleCount = pcmData.Length / BLOCK_ALIGN;
-                frame.Duration = TimeSpan.FromSeconds((double)sampleCount / SAMPLE_RATE);
-
-                node.AddFrame(frame);
-
-                Interlocked.Add(ref _totalSamplesPlayed, sampleCount);
-                _queueCount++;
-
-                if (_queueCount <= 5 || _queueCount % 500 == 0)
-                    AudioDiagLog.Write($"[QUEUE] #{_queueCount}: 提交 WASAPI 缓冲 {pcmData.Length} 字节, 样本={sampleCount}");
-            }
-            catch (Exception ex)
-            {
-                AudioDiagLog.Write($"[QUEUE] 提交 WASAPI 缓冲异常: {ex.Message}");
-            }
-        }
+        // ──────────────────────────── 释放 ────────────────────────────────
 
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
-            _running = false;
+            _running  = false;
 
-            _dataEvent.Set();
+            _dataEvent.Set(); // 唤醒线程使其退出
             try { _playbackThread?.Join(1000); } catch { }
-            _playbackThread = null;
 
-            lock (_lock)
+            if (_hWaveOut != IntPtr.Zero)
             {
-                if (_frameInputNode != null)
+                try { waveOutReset(_hWaveOut); } catch { } // 停止所有挂起缓冲区
+
+                int hdrSize = Marshal.SizeOf<WAVEHDR>();
+                for (int i = 0; i < BUFFER_COUNT; i++)
                 {
-                    try
+                    if (_hdrPtrs[i] != IntPtr.Zero)
                     {
-                        _frameInputNode.Dispose();
+                        try
+                        {
+                            // 仅在已 Prepare 的情况下 Unprepare
+                            var hdr = Marshal.PtrToStructure<WAVEHDR>(_hdrPtrs[i]);
+                            if ((hdr.dwFlags & WHDR_PREPARED) != 0)
+                                waveOutUnprepareHeader(_hWaveOut, _hdrPtrs[i], hdrSize);
+                        }
+                        catch { }
+                        Marshal.FreeHGlobal(_hdrPtrs[i]); // 释放 WAVEHDR 内存
+                        _hdrPtrs[i] = IntPtr.Zero;
                     }
-                    catch { }
-                    _frameInputNode = null;
+                    if (_dataPtrs[i] != IntPtr.Zero)
+                    {
+                        Marshal.FreeHGlobal(_dataPtrs[i]); // 释放数据缓冲区内存
+                        _dataPtrs[i] = IntPtr.Zero;
+                    }
                 }
 
-                if (_audioGraph != null)
-                {
-                    try
-                    {
-                        _audioGraph.Stop();
-                        _audioGraph.Dispose();
-                    }
-                    catch { }
-                    _audioGraph = null;
-                }
+                try { waveOutClose(_hWaveOut); } catch { }
+                _hWaveOut = IntPtr.Zero;
             }
 
             _dataEvent.Dispose();
+            while (_frameQueue.TryDequeue(out _)) { } // 清空剩余队列
 
-            while (_frameQueue.TryDequeue(out _)) { }
+            DiagLog.Write("[AUDIO] AudioSink (waveOut) 已释放");
+        }
 
-            DiagLog.Write("[AUDIO] AudioSink 已释放");
+        // ──────────────────────────── 工具 ────────────────────────────────
+
+        /// <summary>将原生内存区域清零（补静音）。</summary>
+        private static unsafe void ZeroMemory(IntPtr ptr, int length)
+        {
+            var span = new Span<byte>(ptr.ToPointer(), length); // 创建到原生内存的 Span
+            span.Clear();                                        // 全部清零（写入静音）
         }
     }
 }

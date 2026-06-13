@@ -95,8 +95,10 @@ namespace AirPlayer.Protocol.Decoders
 
             try
             {
-                // 构造输入样本并送入解码器
-                var inputSample = CreateSampleFromBytes(input, length);
+                // 构造输入样本并送入解码器（使用 input.Length 而非 length）
+                // length 是输出缓冲大小（4096），不是输入帧大小；AAC 帧通常只有 100-400 字节，
+                // 用错误的 length 会导致 Marshal.Copy 越界抛异常 → 每帧解码失败 → 无声音
+                var inputSample = CreateSampleFromBytes(input, input.Length);
                 try
                 {
                     _mft.ProcessInput(0, inputSample, 0);
