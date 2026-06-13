@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading.Channels;
 using System.Threading;
 using AirPlayer.Protocol.Models;
@@ -67,6 +68,12 @@ namespace AirPlayer.App.Rendering
         // 诊断：已 Present 帧数
         private int _presentCount;
 
+        // ── 帧率节流（接收端主动丢帧）────────────────────────────────────────
+        // 目标呈现间隔（Stopwatch 计时单位），0 表示不限速；由 Initialize 的 targetFps 计算
+        private long _frameIntervalTicks;
+        // 下一次允许呈现的时间点（Stopwatch.GetTimestamp 基准），用于把呈现速率限制到目标帧率
+        private long _nextPresentTicks;
+
         // ──────────────────────────────────────────────────────────────────
         // 初始化
         // ──────────────────────────────────────────────────────────────────
@@ -79,14 +86,20 @@ namespace AirPlayer.App.Rendering
         /// <param name="videoHeight">视频高度（首帧分辨率）</param>
         /// <param name="panelPixelWidth">面板像素宽度（物理像素）</param>
         /// <param name="panelPixelHeight">面板像素高度（物理像素）</param>
+        /// <param name="targetFps">目标呈现帧率，超过该帧率的多余帧只解码不呈现（接收端主动丢帧）；&lt;=0 表示不限速</param>
         public void Initialize(SwapChainPanel panel,
             int videoWidth, int videoHeight,
-            int panelPixelWidth, int panelPixelHeight)
+            int panelPixelWidth, int panelPixelHeight,
+            int targetFps = 0)
         {
             _videoWidth   = videoWidth;
             _videoHeight  = videoHeight;
             _panelWidth   = panelPixelWidth  > 0 ? panelPixelWidth  : videoWidth;
             _panelHeight  = panelPixelHeight > 0 ? panelPixelHeight : videoHeight;
+
+            // 计算目标呈现间隔（Stopwatch 计时单位）；targetFps<=0 时不限速
+            _frameIntervalTicks = targetFps > 0 ? Stopwatch.Frequency / targetFps : 0;
+            _nextPresentTicks   = 0; // 首帧立即放行，之后由节流门控推进
 
             // ── 创建各子组件 ──────────────────────────────────────────────
             _gpu       = new GpuDevice();
@@ -240,7 +253,9 @@ namespace AirPlayer.App.Rendering
                         }
                         if (decoded > 1)
                             DiagLog.Write($"[PRS] 批量解码 {decoded} 帧，仅呈现最新");
-                        ProcessFrame(lastFrame, present: true); // 最后一帧解码+呈现
+                        // 帧率节流：最后一帧是否呈现由目标帧率门控决定；
+                        // 未达呈现间隔时仅解码不呈现（维护参考链，主动丢弃多余帧）
+                        ProcessFrame(lastFrame, present: ShouldPresentNow());
                         // 周期性诊断：每 60 帧输出一次解码成功/跳过统计
                         _decodedFrameCount++;
                         if (_decodedFrameCount == 1 || _decodedFrameCount % 60 == 0)
@@ -258,6 +273,24 @@ namespace AirPlayer.App.Rendering
             }
 
             DiagLog.Write("[PRS] 渲染线程退出");
+        }
+
+        /// <summary>
+        /// 帧率节流门控：判断当前是否到达目标呈现间隔。
+        /// </summary>
+        /// <returns>true 表示放行呈现；false 表示本帧仅解码不呈现（主动丢帧）。</returns>
+        private bool ShouldPresentNow()
+        {
+            if (_frameIntervalTicks <= 0) return true; // 未设置目标帧率：不限速，全部呈现
+
+            long now = Stopwatch.GetTimestamp(); // 当前高精度时间戳
+            if (now < _nextPresentTicks) return false; // 距上次呈现未满一帧间隔：丢弃本帧
+
+            // 放行呈现，并把下一次允许呈现的时间点推进一个帧间隔（按固定节拍累加，避免漂移）
+            _nextPresentTicks += _frameIntervalTicks;
+            // 若已落后超过一帧（源帧率低于目标或刚启动）：以当前时刻重新对齐，防止追帧式连续放行
+            if (_nextPresentTicks < now) _nextPresentTicks = now + _frameIntervalTicks;
+            return true;
         }
 
         /// <summary>处理单帧：解码 → 检查 Resize → [可选] Blt → Present</summary>

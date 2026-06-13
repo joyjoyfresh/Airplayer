@@ -680,7 +680,8 @@ namespace AirPlayer.App
             int fps = s.Presented - _lastPresentedForFps;
             if (fps < 0) fps = 0;
             _lastPresentedForFps = s.Presented;
-            HudText.Text = $"{s.Width}x{s.Height}   {fps} fps\n解码 {s.Decoded}  丢帧 {s.Skipped}";
+            // 显示「目标/实际」帧率：目标为设置中的 PreferredFps，实际为上一秒真实呈现帧数
+            HudText.Text = $"{s.Width}x{s.Height}   {_settings.PreferredFps}/{fps} fps\n解码 {s.Decoded}  丢帧 {s.Skipped}";
         }
 
         /// <summary>鼠标移动：显示菜单按钮并重置自动隐藏计时（仅投屏时会隐藏）。</summary>
@@ -968,7 +969,8 @@ namespace AirPlayer.App
 
                 // 创建并初始化 VideoPresenter
                 _presenter = new VideoPresenter();
-                _presenter.Initialize(SwapPanel, videoWidth, videoHeight, panelPixelW, panelPixelH);
+                // 传入目标帧率：超过该帧率的多余帧在接收端只解码不呈现（主动丢帧），使实际呈现帧率符合设置
+                _presenter.Initialize(SwapPanel, videoWidth, videoHeight, panelPixelW, panelPixelH, _settings.PreferredFps);
 
                 // 注册面板尺寸变化事件（用于 Resize）
                 SwapPanel.SizeChanged += SwapPanel_SizeChanged;
