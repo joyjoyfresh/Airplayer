@@ -170,6 +170,13 @@ namespace AirPlayer.App
             }
             else
             {
+                // 视频管线未就绪（_videoWidth==0）时调用 Start() 会因帧尺寸为0导致 BeginWriting 失败
+                if (!_pipelineReady || _videoWidth <= 0 || _videoHeight <= 0)
+                {
+                    ShowToast("请等待视频就绪后再开始录制");
+                    return;
+                }
+
                 try
                 {
                     _recorder = new Mp4Recorder();

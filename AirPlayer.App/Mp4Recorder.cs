@@ -60,12 +60,14 @@ namespace AirPlayer.App
                     
                     _videoStreamIndex = _sinkWriter.AddStream(videoOutType);
 
-                    // 4. 配置视频输入类型 (H.264 Passthrough，无重编码开销)
+                    // 4. 配置视频输入类型（与输出类型完全一致才能触发 passthrough 模式，否则 SinkWriter 会尝试插入编码器 MFT）
                     var videoInType = MediaFactory.MFCreateMediaType();
                     videoInType.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
                     videoInType.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
                     videoInType.Set(MediaTypeAttributeKeys.FrameSize, PackLong(width, height));
-                    
+                    videoInType.Set(MediaTypeAttributeKeys.FrameRate, PackLong(30, 1)); // 与输出类型一致，确保 passthrough 识别
+                    videoInType.Set(MediaTypeAttributeKeys.PixelAspectRatio, PackLong(1, 1)); // 与输出类型一致
+
                     _sinkWriter.SetInputMediaType(_videoStreamIndex, videoInType, null);
 
                     // 5. 配置音频输出类型 (AAC-LC, 约128kbps)
@@ -133,11 +135,14 @@ namespace AirPlayer.App
                 {
                     // 将微秒转换为 Media Foundation 时间单位（100 纳秒 = 10^-7 秒，即微秒 * 10）
                     long pts100ns = ptsMicroseconds * 10;
-                    sample = CreateSample(data, length, pts100ns);
+                    // MirroringListener 已将 AVCC 转为 AnnexB（供 H.264 解码器使用）；
+                    // MP4 封装器要求 AVCC（4字节大端长度前缀），此处转回
+                    byte[] avccData = AnnexBToAvcc(data, length);
+                    sample = CreateSample(avccData, avccData.Length, pts100ns);
 
                     if (isKeyframe)
                     {
-                        sample.Set(SampleAttributeKeys.CleanPoint, true);
+                        sample.Set(SampleAttributeKeys.CleanPoint, true); // IDR 帧标记为随机访问点
                     }
 
                     _sinkWriter.WriteSample(_videoStreamIndex, sample);
@@ -259,7 +264,58 @@ namespace AirPlayer.App
             }
         }
 
-        private static long PackLong(int high, int low) => ((long)high << 32) | (uint)low;
+        private static long PackLong(int high, int low) => ((long)high << 32) | (uint)low; // 将两个 32 位整数压缩为 MF 要求的 64 位 packed 格式
+
+        /// <summary>
+        /// 将 AnnexB 格式（00 00 00 01 起始码）转换为 AVCC 格式（4字节大端长度前缀）。
+        /// MirroringListener 将 AirPlay 原始 AVCC 转为 AnnexB 供解码器使用；
+        /// MP4 封装需要 AVCC，此处转回。AirPlay 数据统一使用4字节起始码。
+        /// </summary>
+        private static byte[] AnnexBToAvcc(byte[] data, int length)
+        {
+            // 第一遍：扫描所有 NALU 的起始位置和长度（AirPlay 统一使用 4 字节起始码 00 00 00 01）
+            var nalus = new System.Collections.Generic.List<(int offset, int len)>();
+            int i = 0;
+            while (i + 4 <= length)
+            {
+                if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 0 && data[i + 3] == 1) // 4 字节起始码
+                {
+                    int naluStart = i + 4; // 跳过起始码，NALU 数据起点
+                    int naluEnd = length;
+                    for (int j = naluStart; j + 4 <= length; j++) // 向后找下一个起始码
+                    {
+                        if (data[j] == 0 && data[j + 1] == 0 && data[j + 2] == 0 && data[j + 3] == 1)
+                        {
+                            naluEnd = j; // 下一个起始码位置即为当前 NALU 末尾
+                            break;
+                        }
+                    }
+                    nalus.Add((naluStart, naluEnd - naluStart)); // 记录 NALU 起始偏移和字节长度
+                    i = naluEnd; // 跳到下一个起始码继续扫描
+                }
+                else
+                {
+                    i++;
+                }
+            }
+
+            // 第二遍：写入 AVCC 格式（每个 NALU 前加 4 字节大端长度）
+            int totalLen = 0;
+            foreach (var (_, nl) in nalus) totalLen += 4 + nl; // 每个 NALU：4字节长度 + 数据
+            var avcc = new byte[totalLen];
+            int pos = 0;
+            foreach (var (off, nl) in nalus)
+            {
+                avcc[pos]     = (byte)(nl >> 24); // 大端 4 字节 NALU 长度
+                avcc[pos + 1] = (byte)(nl >> 16);
+                avcc[pos + 2] = (byte)(nl >> 8);
+                avcc[pos + 3] = (byte)(nl);
+                pos += 4;
+                Buffer.BlockCopy(data, off, avcc, pos, nl); // 拷贝 NALU 裸数据
+                pos += nl;
+            }
+            return avcc;
+        }
 
         private void Cleanup()
         {
