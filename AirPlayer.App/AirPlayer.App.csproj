@@ -14,6 +14,20 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
+
+    <!-- 版本与产品信息（0.x 为预发布版本，功能仍在完善中） -->
+    <Version>0.2.0</Version>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
+    <Product>AirPlayer</Product>
+    <Authors>AirPlayer</Authors>
+    <Description>Windows AirPlay/AirTunes 接收端：接收 iPhone/iPad 的屏幕镜像投屏（H.264 硬解 + AAC-ELD 音频），音画同步播放。</Description>
+    <Copyright>Copyright © 2026</Copyright>
+
+    <!-- Release 构建优化 -->
+    <Optimize Condition="'$(Configuration)' == 'Release'">true</Optimize>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,8 +39,4 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.756" />
     <!-- Media Foundation 托管封装：用于调用系统 H264 硬件解码器 -->
     <PackageReference Include="Vortice.MediaFoundation" Version="3.6.2" />
-    <!-- Vortice D3D11/DXGI 托管封装：全 GPU 管线（硬件解码 → 视频处理 → 交换链呈现） -->
-    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
-    <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
-  </ItemGroup>
-</Project>
+   

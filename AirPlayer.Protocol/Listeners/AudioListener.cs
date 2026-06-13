@@ -194,6 +194,11 @@ namespace AirPlayer.Protocol.Listeners
                     if (cPacketCount % 500 == 0)
                     {
                         Console.WriteLine($"[DEBUG-C] Stats: packets={cPacketCount}, 0x56={c56Count}, 0x54={c54Count}, other={cOtherCount}, queued={cQueuedCount}, dequeued={cDequeuedCount}, pcmDelivered={cPcmDelivered}, socketErrors={cSocketErrors}");
+                        // 同步写入文件日志（airplay-video.log），便于事后定位
+                        DiagLog.Write($"[AUDIO-C] 音频包统计: 收包={cPacketCount} 音频帧(0x56)={c56Count} 同步包(0x54)={c54Count} 入队={cQueuedCount} 出队={cDequeuedCount} 已投递PCM={cPcmDelivered}");
+                        // 关键告警：收到了音频帧但一帧 PCM 都没投递 → 解码器没产出音频（多半缺 fdk-aac.dll）
+                        if (c56Count > 100 && cPcmDelivered == 0)
+                            DiagLog.Write("[AUDIO-C][告警] 已收到大量音频帧但解码后无任何 PCM 投递 → 解码器异常（请检查上方 [FDK] 日志，很可能缺 fdk-aac.dll）");
                     }
 
                     Array.Fill<byte>(packet, 0);
@@ -343,6 +348,9 @@ namespace AirPlayer.Protocol.Listeners
                     if (dPacketCount % 500 == 0)
                     {
                         Console.WriteLine($"[DEBUG-D] Stats: packets={dPacketCount}, queued={dQueuedCount}, dequeued={dDequeuedCount}, pcmDelivered={dPcmDelivered}, socketErrors={dSocketErrors}");
+                        DiagLog.Write($"[AUDIO-D] 音频数据包统计: 收包={dPacketCount} 入队={dQueuedCount} 出队={dDequeuedCount} 已投递PCM={dPcmDelivered}");
+                        if (dPacketCount > 100 && dPcmDelivered == 0)
+                            DiagLog.Write("[AUDIO-D][告警] 已收到大量音频包但解码后无任何 PCM 投递 → 解码器异常（请检查上方 [FDK] 日志，很可能缺 fdk-aac.dll）");
                     }
 
                     Array.Clear(packet, 0, packet.Length);
@@ -506,24 +514,25 @@ namespace AirPlayer.Protocol.Listeners
             var length = _decoder.GetOutputStreamLength();
             var output = new byte[length];
 
+            // 解码约定：res>0 = 实际 PCM 字节数（成功）；res==0 = 数据不足无输出；res<0 = 错误
             var res = _decoder.DecodeFrame(raw, ref output, length);
-            if (res != 0 && res != -1)
+            if (res < 0)
             {
-                output = new byte[length];
+                // 解码错误：不产出音频
                 if (_queueCallCount <= 10 || _queueCallCount % 200 == 0)
-                    DiagLog.Write($"[BUF-DECODE] #{_queueCallCount}: ERROR decoder={_decoder.Type}, code=0x{res:X} ({res}), inputLen={raw.Length}, outputLen={length}");
+                    DiagLog.Write($"[BUF-DECODE] #{_queueCallCount}: ERROR decoder={_decoder.Type}, code={res}, inputLen={raw.Length}, outputLen={length}");
             }
             else
             {
                 if (_queueCallCount <= 10 || _queueCallCount % 200 == 0)
                 {
-                    // Check if PCM output is silence
+                    // 检查解出的 PCM 是否为静音（仅诊断用）
                     bool isSilence = true;
-                    for (int i = 0; i < Math.Min(output.Length, 64); i++)
+                    for (int i = 0; i < Math.Min(res, 64); i++)
                     {
                         if (output[i] != 0) { isSilence = false; break; }
                     }
-                    DiagLog.Write($"[BUF-DECODE] #{_queueCallCount}: OK decoder={_decoder.Type}, inputLen={raw.Length}, outputLen={length}, actualOut={res}, silence={isSilence}");
+                    DiagLog.Write($"[BUF-DECODE] #{_queueCallCount}: OK decoder={_decoder.Type}, inputLen={raw.Length}, actualOut={res}, silence={isSilence}");
                 }
             }
 
@@ -534,8 +543,15 @@ namespace AirPlayer.Protocol.Listeners
             Console.WriteLine($"LNG: {length}");
             File.WriteAllBytes($"{pPath}raw_{seqnum}", output);
 #endif
-            Array.Copy(output, 0, entry.AudioBuffer, 0, output.Length);
-            entry.AudioBufferLen = output.Length;
+            // 只拷贝实际解出的 PCM 字节数（res），而非固定的输出缓冲长度。
+            // 旧代码用 output.Length(4096) 会把整块缓冲都当成有效音频，
+            // 导致 AAC-ELD（每帧仅 480 样本=1920 字节）多播 2 倍数据 → 音画不同步、噪音。
+            int decodedLen = (res > 0) ? Math.Min(res, entry.AudioBuffer.Length) : 0;
+            if (decodedLen > 0)
+            {
+                Array.Copy(output, 0, entry.AudioBuffer, 0, decodedLen);
+            }
+            entry.AudioBufferLen = decodedLen;
 
             /* Update the raop_buffer seqnums */
             if (raop_buffer.IsEmpty)
@@ -709,12 +725,22 @@ namespace AirPlayer.Protocol.Listeners
                 // 根据协商的音频格式选择解码器
                 switch (session.AudioFormat)
                 {
-                    case Models.Enums.AudioFormat.AacMain:
                     case Models.Enums.AudioFormat.AacEld:
+                        // 屏幕镜像音频 = AAC-ELD。微软 MFT 不支持 ELD；
+                        // FFmpeg 原生解码器经实测也无法解码 ELD（每帧返回 AVERROR_BUG）。
+                        // 唯一可行方案是 fdk-aac（行业标准，RPiPlay/UxPlay 均用它）。
+                        // 需要在输出目录放置 fdk-aac.dll —— 缺失时下方 Config 会打印醒目横幅。
+                        _decoder = new Decoders.FdkAacEldDecoder();
+                        int eldSpf = session.AudioSamplesPerFrame > 0 ? session.AudioSamplesPerFrame : 480;
+                        var eldCfg = _decoder.Config(44100, 2, 16, eldSpf);
+                        DiagLog.Write($"[DEC] AAC-ELD 解码器(fdk-aac), configResult={eldCfg}");
+                        break;
+                    case Models.Enums.AudioFormat.AacMain:
+                        // AAC-LC（AirPlay 音乐流）继续走 Media Foundation MFT
                         _decoder = new Decoders.AacDecoder();
                         int spf = session.AudioSamplesPerFrame > 0 ? session.AudioSamplesPerFrame : 1024;
                         var cfgResult = _decoder.Config(44100, 2, 16, spf);
-                        DiagLog.Write($"[DEC] AAC 解码器已创建, format={session.AudioFormat}, configResult={cfgResult}");
+                        DiagLog.Write($"[DEC] AAC-LC(MFT) 解码器已创建, configResult={cfgResult}");
                         break;
                     case Models.Enums.AudioFormat.AppleLossless:
                         // ALAC 解码器暂未实现，回退到 NoOp
@@ -734,3 +760,4 @@ namespace AirPlayer.Protocol.Listeners
         }
     }
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         

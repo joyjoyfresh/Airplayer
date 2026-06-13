@@ -1,10 +1,12 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 
 namespace AirPlayer.App
 {
     /// <summary>
-    /// 音频诊断日志：写入项目根目录 audio-debug.log，用于排查音频管道问题。
+    /// 音频诊断日志：写入 audio-debug.log，用于排查音频管道问题。
+    /// 仅 Debug 构建生效（Write 标记了 [Conditional("DEBUG")]，Release 构建零开销）。
     /// </summary>
     public static class AudioDiagLog
     {
@@ -26,6 +28,7 @@ namespace AirPlayer.App
             catch { }
         }
 
+        [Conditional("DEBUG")]
         public static void Write(string message)
         {
             try
@@ -38,6 +41,7 @@ namespace AirPlayer.App
             catch { }
         }
 
+        [Conditional("DEBUG")]
         public static void Dispose()
         {
             try
@@ -45,12 +49,4 @@ namespace AirPlayer.App
                 lock (_lock)
                 {
                     _writer?.WriteLine($"=== AudioDiagLog ended at {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} ===");
-                    _writer?.Flush();
-                    _writer?.Dispose();
-                    _writer = null;
-                }
-            }
-            catch { }
-        }
-    }
-}
+         
