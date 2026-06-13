@@ -140,6 +140,11 @@ namespace AirPlayer.App
         private long _enqueueCount; // 入队帧计数
         private long _submitCount;  // 提交 waveOut 次数
 
+        // ──────────────────────────── 音量增益 ────────────────────────────
+
+        // 软件播放增益，[0,1]，1=原始音量；由 iOS 端音量调整经 SetVolume 设置（volatile 保证跨线程可见）
+        private volatile float _gain = 1.0f;
+
         /// <summary>当前音频时钟（微秒，NTP epoch）— 供视频同步参考</summary>
         public ulong CurrentClock => _basePtsSet
             ? _basePts + (ulong)((double)Interlocked.Read(ref _totalSamplesPlayed) / SAMPLE_RATE * 1_000_000)
@@ -287,6 +292,43 @@ namespace AirPlayer.App
             DiagLog.Write("[AUDIO] 队列已清空");
         }
 
+        /// <summary>设置播放音量（线程安全，可在网络线程调用）。</summary>
+        /// <param name="airplayVolume">
+        /// AirPlay 音量值，单位分贝(dB)：0 = 最大音量，约 -30 = 最小音量，-144 = 静音。
+        /// 内部按 增益 = 10^(dB/20) 换算为 [0,1] 线性增益。
+        /// </param>
+        public void SetVolume(double airplayVolume)
+        {
+            double gain;
+            if (airplayVolume <= -144.0) gain = 0.0;            // 协议约定的静音值
+            else if (airplayVolume >= 0.0) gain = 1.0;          // 满音量（0 dB）
+            else gain = Math.Pow(10.0, airplayVolume / 20.0);   // 分贝 → 线性增益
+            _gain = (float)Math.Clamp(gain, 0.0, 1.0);          // 钳位到 [0,1]
+            AudioDiagLog.Write($"[VOL] iOS 音量 {airplayVolume:0.##} dB → 增益 {_gain:0.###}");
+        }
+
+        /// <summary>按当前增益就地缩放 16-bit PCM 采样（小端）。</summary>
+        private void ApplyGain(byte[] data, int length)
+        {
+            float g = _gain;
+            if (g >= 0.999f) return;            // 接近原始音量：无需处理
+            if (g <= 0.0001f)                   // 静音：直接清零
+            {
+                Array.Clear(data, 0, length);
+                return;
+            }
+            // 逐个 16-bit 采样乘以增益并钳位，防止溢出
+            for (int i = 0; i + 1 < length; i += 2)
+            {
+                short sample = (short)(data[i] | (data[i + 1] << 8)); // 小端还原有符号采样
+                int scaled = (int)(sample * g);                       // 应用增益
+                if (scaled > short.MaxValue) scaled = short.MaxValue;
+                else if (scaled < short.MinValue) scaled = short.MinValue;
+                data[i]     = (byte)(scaled & 0xFF);                  // 写回低字节
+                data[i + 1] = (byte)((scaled >> 8) & 0xFF);           // 写回高字节
+            }
+        }
+
         // ──────────────────────────── 播放线程 ────────────────────────────
 
         /// <summary>
@@ -344,6 +386,7 @@ namespace AirPlayer.App
 
                 // ── 拷入 PCM 数据；不足 BUFFER_BYTES 的部分补静音 ─────────
                 int copyLen = Math.Min(pcmData.Length, BUFFER_BYTES);
+                ApplyGain(pcmData.Data, copyLen); // 按 iOS 端设置的音量增益缩放采样
                 Marshal.Copy(pcmData.Data, 0, _dataPtrs[_nextBuf], copyLen);
                 if (copyLen < BUFFER_BYTES)
                     ZeroMemory(_dataPtrs[_nextBuf] + copyLen, BUFFER_BYTES - copyLen);

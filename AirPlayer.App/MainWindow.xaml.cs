@@ -61,6 +61,7 @@ namespace AirPlayer.App
 
         // ===== 音频播放管线 =====
         private AudioSink? _audioSink;                // 音频播放器
+        private double _lastAirplayVolume = 0.0;      // iOS 端最近设置的音量(dB)，0=满音量；新建播放器时复用
 
 
         // ===== v0.3 体验：设置 / HUD / 控制条自动隐藏 =====
@@ -788,6 +789,7 @@ namespace AirPlayer.App
             _receiver.OnH264DataReceived         += Receiver_OnH264DataReceived;
             _receiver.OnPcmDataReceived          += Receiver_OnPcmDataReceived;
             _receiver.OnAudioFlushReceived       += Receiver_OnAudioFlushReceived;
+            _receiver.OnSetVolumeReceived        += Receiver_OnSetVolume; // iOS 端调整投屏音量
 
             Task.Run(async () =>
             {
@@ -824,6 +826,7 @@ namespace AirPlayer.App
                 {
                     _audioSink = new AudioSink(_settings.PreferredAudioDevice);
                     _audioSink.Initialize();
+                    _audioSink.SetVolume(_lastAirplayVolume); // 应用 iOS 端当前音量（可能在建播放器前已下发）
                 }
             });
         }
@@ -871,6 +874,13 @@ namespace AirPlayer.App
         private void Receiver_OnAudioFlushReceived(object? sender, EventArgs e)
         {
             _audioSink?.Flush();
+        }
+
+        /// <summary>iOS 端调整投屏音量：记录并实时应用到音频播放器（在网络线程触发，SetVolume 内部线程安全）</summary>
+        private void Receiver_OnSetVolume(object? sender, decimal volume)
+        {
+            _lastAirplayVolume = (double)volume; // 记录最近音量，新建播放器时复用
+            _audioSink?.SetVolume(_lastAirplayVolume);
         }
 
         /// <summary>每收到一帧 H264 时：过滤后入队，首帧触发管线创建</summary>
