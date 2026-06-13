@@ -1,131 +1,118 @@
-# Git 使用指南（AirPlayer 仓库）
+# Git 版本管理规范与使用指南（AirPlayer 项目）
 
-按本仓库实际情况整理：`develop` 为开发分支、`main` 为稳定分支、用 `v0.x.0` 打标签、目前没有远程。
+本仓库使用严格的 Git 工作流进行分支管理和版本发布，以确保提交历史树的清晰、可追溯以及自动化发布的流畅度。
 
 ---
 
-## 1. 看状态和历史（先看再动手）
+## 1. 分支策略 (Branching Strategy)
 
+- **`develop` 分支 (日常开发)**
+  - **定位**：核心开发分支，代码始终保持最新的开发状态。
+  - **规则**：所有的新增功能 (`feat`)、缺陷修复 (`fix`)、代码重构 (`refactor`) 等开发工作，必须**在 `develop` 分支上进行提交**。
+  - **禁止**：严禁在此分支上直接发布版本标签。
+
+- **`main` 分支 (发布/稳定)**
+  - **定位**：生产/稳定版本分支，仅包含经过完整验证的 Release 版本代码。
+  - **规则**：**严禁直接在 `main` 分支上进行日常提交**。必须从 `develop` 分支通过 Merge 合并代码进入 `main`。
+
+---
+
+## 2. 合并规范 (Merge Guidelines)
+
+- **强制非快进合并 (`--no-ff`)**
+  - 在将 `develop` 合并到 `main` 分支时，**必须使用 `--no-ff` (No Fast-Forward) 参数**：
+    ```bash
+    git switch main
+    git merge --no-ff develop
+    ```
+  - **目的**：强制 Git 产生一个显式的 Merge 提交，从而在提交历史树中保留完整的开发弧线（分支图上的泡泡拓扑结构），不会将 `develop` 的零碎提交平铺压缩成单条主线。
+
+---
+
+## 3. 提交信息规范 (Commit Message Conventions)
+
+### 3.1 `develop` 分支上的开发提交
+所有在 `develop` 分支上的日常提交都必须严格遵循 **Conventional Commits (约定式提交)** 规范，且使用**简体中文**编写描述。
+- **格式**：`<type>: <简要中文描述>`
+- **常见类型 (`<type>`)**：
+  - `feat`：新增功能 (Feature)
+  - `fix`：修复 Bug (Bug Fix)
+  - `refactor`：代码重构，不涉及功能修改
+  - `chore`：杂务，如构建过程、依赖项更新、配置清理等
+  - `docs`：文档更新
+  - `style`：代码格式调整，不影响运行逻辑
+- **示例**：
+  - `feat: 更多设置新增视频播放帧率选择限制功能（支持 60fps 与 30fps 切换）`
+  - `refactor: 调整更多设置中各配置项的排列顺序`
+  - `fix: 修复投屏无声音问题`
+
+### 3.2 合并到 `main` 时的 Merge 提交
+当执行合并操作时，生成的合并提交消息应作为发布版本描述，采用版本号作为前缀。
+- **格式**：`v{Version}: <版本更新摘要>`
+- **示例**：
+  - `v0.4.1: 新增全屏铺满与视频分辨率限制，优化窗口标题及菜单项显示顺序`
+  - `v0.4.0: 移除 MP4 录屏功能，优化音频设备选择与窗口行为`
+
+---
+
+## 4. 日常发布工作流 (Release Workflow)
+
+### 第一步：在 `develop` 上完成开发
 ```bash
-git status                          # 当前改了哪些文件、在哪个分支
-git status -s                       # 精简版（M=修改 A=新增 ??=未跟踪）
-git log --oneline -10               # 最近 10 条提交（一行一条）
-git log --oneline --graph --all     # 图形化看所有分支走向
-git diff                            # 看「还没 add」的改动内容
-git diff --staged                   # 看「已 add 待提交」的改动
-git show <提交号>                   # 看某次提交改了什么
-git blame 文件名                    # 看每行是哪次提交、谁改的
-```
-
-## 2. 提交改动（add → commit 两步）
-
-```bash
-git add 文件名                      # 把某文件的改动放进暂存区
-git add AirPlayer.App/              # 添加整个目录
-git add -A                          # 添加所有改动（含新增/删除）
-git commit -m "说明"                # 提交暂存区的改动
-git commit -am "说明"               # 对「已跟踪文件」一步完成 add+commit（不含新文件）
-```
-
-> 提交信息写清楚“做了什么”，例如 `v0.3: 控制条收成单按钮菜单 + 修复全屏旋转`。
-
-## 3. 分支（develop / main 模式）
-
-```bash
-git branch                          # 看本地分支，*号是当前所在
-git switch develop                  # 切换分支（等价 git checkout develop）
-git switch -c feature/录屏           # 新建并切到一个功能分支
-git merge develop                   # 把 develop 合并进当前分支
-git branch -d 分支名                # 删除已合并的分支
-```
-
-## 4. 撤销 / 回退（按“后悔程度”从轻到重）
-
-```bash
-git restore 文件名                  # 丢弃某文件「还没 add」的改动
-git restore --staged 文件           # 把误 add 的文件移出暂存区（改动还在）
-git commit --amend                  # 改最近一次提交（改信息或补文件）；会换提交号
-git reset --soft HEAD~1             # 撤销最近一次提交，改动留在暂存区
-git reset --mixed HEAD~1            # 撤销最近一次提交，改动留在工作区（默认）
-git reset --hard HEAD~1             # ⚠️ 彻底丢弃最近一次提交和改动（危险）
-git revert <提交号>                 # 安全撤销：生成一个“反向提交”，不改历史
-```
-
-## 5. 暂存现场（stash）
-
-```bash
-git stash                           # 把当前未提交改动收起来，工作区变干净
-git stash pop                       # 把最近收起来的改动恢复回来
-git stash list                      # 看收了几份
-```
-
-## 6. 标签（发版用）
-
-```bash
-git tag                             # 看所有标签
-git tag -a v0.3.0 -m "v0.3 预发布"   # 在当前提交打带说明的标签
-git tag -d v0.3.0                   # 删标签
-```
-
-## 7. 本仓库的日常流程（建议照走）
-
-```bash
-# 平时在 develop 上开发
 git switch develop
-# …改代码…
-git add -A
-git commit -m "做了啥"
+# ...修改代码...
+git status -s               # 查看文件改动状态
+git add -A                  # 暂存所有改动
+git commit -m "feat: 新增某某功能"
+git push origin develop     # 推送到远程 develop 分支
+```
 
-# 发版时：把 develop 合到 main 并打标签
+### 第二步：将 `develop` 合并至 `main` (发版)
+```bash
 git switch main
-git merge develop
-git tag -a v0.3.0 -m "v0.3"
-git switch develop                  # 回到 develop 继续开发
+git pull origin main        # 确保本地 main 为最新
+git merge --no-ff develop -m "v0.4.2: 新增某某功能并优化系统表现"
 ```
 
-## 8. 以后推到 GitHub（目前没远程）
-
+### 第三步：为版本打标签 (Tag)
 ```bash
-git remote -v                                  # 看有没有远程（现在为空）
-git remote add origin <GitHub仓库URL>           # 绑定远程
-git push -u origin main                         # 首次推送 main 并建立跟踪
-git push origin develop                         # 推 develop
-git push origin --tags                          # 把标签也推上去
-git pull                                        # 拉取远程更新
+# 打上带附注的版本标签
+git tag -a v0.4.2 -m "v0.4.2 预发布"
+```
+
+### 第四步：推送到远程仓库
+```bash
+git push origin main        # 推送合并后的 main 分支
+git push origin --tags      # 推送所有新标签至 GitHub
+```
+
+### 第五步：返回开发分支
+```bash
+git switch develop          # 回到 develop 分支继续后续功能研发
 ```
 
 ---
 
-## 本仓库注意点
+## 5. 常用 Git 维护命令速查
 
-- **二进制不进仓库**：`.gitignore` 已忽略 `AirPlayer.App/native/*.dll`、`bin/`、`obj/`、`*.log`、`publish/`、`*.zip`。原生依赖（如 `fdk-aac.dll`）各机器自行获取。
-- **作者身份**：由 `git config user.name` / `user.email` 决定。本仓库应为
-  `joyjoyfresh <fu18290401406@gmail.com>`。查看：`git config user.name`；设置：`git config user.name joyjoyfresh`。
-- **index.lock / 索引损坏**：若提示 `index.lock exists` 或 `index file corrupt`，多是上次 git 进程没收尾。处理：
-  ```bash
-  rm -f .git/index.lock
-  git status >/dev/null 2>&1 || { rm -f .git/index && git reset; }   # 重建索引，不动工作区文件
-  ```
-- **批量改提交作者**（如曾用错名字）：在干净工作区下
-  ```bash
-  git stash    # 若有未提交改动先收起
-  FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --tag-name-filter cat --env-filter '
-  if [ "$GIT_AUTHOR_NAME" = "旧名字" ]; then export GIT_AUTHOR_NAME=joyjoyfresh; fi
-  if [ "$GIT_COMMITTER_NAME" = "旧名字" ]; then export GIT_COMMITTER_NAME=joyjoyfresh; fi
-  ' -- --all
-  git stash pop
-  ```
-- **放弃所有未提交改动**（慎用）：`git restore .`
-- **彻底回到干净工作区（含删未跟踪文件，慎用）**：`git clean -fd`（先 `git clean -nd` 预览）。
-
----
-
-## 速查：每天最常用的 5 条
-
+### 5.1 查看状态与历史
 ```bash
-git status          # 我改了啥
-git add -A          # 全加进暂存
-git commit -m "…"   # 提交
-git log --oneline   # 看历史
-git switch <分支>   # 切分支
+git status                           # 查看当前分支及文件修改情况
+git log --oneline -n 10              # 查看最近 10 条提交历史
+git log --oneline --graph --all      # 图形化查看所有分支及合并走势
+git diff                             # 查看工作区未暂存的修改
+```
+
+### 5.2 撤销与恢复
+```bash
+git restore <file>                   # 丢弃工作区中某文件的修改
+git restore --staged <file>          # 将文件从暂存区撤出（保留修改内容）
+git reset --soft HEAD~1              # 撤销最近一次提交，将修改保留在暂存区
+git revert <commit-id>               # 安全回滚：通过新增提交来撤销指定提交的改动
+```
+
+### 5.3 暂存修改 (Stash)
+```bash
+git stash                            # 暂存当前未提交的修改，使工作区保持干净
+git stash pop                        # 恢复并删除最近一次暂存的修改
 ```
