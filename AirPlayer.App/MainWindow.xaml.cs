@@ -557,13 +557,17 @@ namespace AirPlayer.App
 
             var visibility = _isMirroringActive ? Visibility.Visible : Visibility.Collapsed;
             ScreenshotMenuItem.Visibility = visibility;
-
             RotateMenuItem.Visibility = visibility;
-            FillScreenMenuItem.Visibility = visibility;
-            FillScreenMenuItem.IsChecked = _settings.FillScreen;
             FullScreenMenuItem.Visibility = visibility;
             ExitMirroringMenuItem.Visibility = visibility;
             ActiveCastingSeparator.Visibility = visibility;
+
+            // 铺满屏幕仅在「投屏中 + 全屏」时才有意义，独立分栏显示
+            var fillVisibility = (_isMirroringActive && _isFullScreen) ? Visibility.Visible : Visibility.Collapsed;
+            FillScreenSeparatorTop.Visibility    = fillVisibility;
+            FillScreenMenuItem.Visibility        = fillVisibility;
+            FillScreenMenuItem.IsChecked         = _settings.FillScreen;
+            FillScreenSeparatorBottom.Visibility = fillVisibility;
         }
 
         /// <summary>菜单「退出投屏」按钮点击事件。</summary>
