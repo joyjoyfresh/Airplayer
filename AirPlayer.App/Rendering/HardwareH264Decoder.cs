@@ -151,11 +151,14 @@ namespace AirPlayer.App.Rendering
         /// <param name="annexB">Annex-B 格式 H264 帧字节</param>
         /// <param name="texture">输出：解码后的 NV12 纹理（调用方须 Dispose）</param>
         /// <param name="subresourceIndex">纹理数组子资源索引</param>
+        /// <param name="needMoreInput">输出：true 表示帧已被解码器接收、只是尚未产出（流水线延迟，属正常，非丢帧）；
+        /// 返回 false 且此值为 false 时才是真正的解码失败。</param>
         /// <returns>是否成功产出一帧纹理</returns>
-        public bool TryDecode(byte[] annexB, out ID3D11Texture2D? texture, out uint subresourceIndex)
+        public bool TryDecode(byte[] annexB, out ID3D11Texture2D? texture, out uint subresourceIndex, out bool needMoreInput)
         {
             texture = null;
             subresourceIndex = 0;
+            needMoreInput = false;
 
             // 构造输入样本并送入 MFT（使用池化样本，不要 Dispose）
             var inputSample = CreateSampleFromBytes(annexB);
@@ -166,14 +169,14 @@ namespace AirPlayer.App.Rendering
             catch (SharpGenException ex)
             {
                 DiagLog.Write($"[HWD] ProcessInput 异常: 0x{ex.ResultCode.Code:X8}");
-                return false;
+                return false; // 真正失败
             }
 
             // 首次送入后尝试协商输出类型
             if (!_outputTypeSet)
                 TrySelectNv12OutputType();
 
-            if (!_outputTypeSet) return false; // 还未协商成功，等待更多输入
+            if (!_outputTypeSet) { needMoreInput = true; return false; } // 还未协商成功，等待更多输入
 
             // ── 取出解码输出 ──────────────────────────────────────────────
             // STREAM_CHANGE 循环重试：MFT 首次输出格式变化时返回 STREAM_CHANGE，
@@ -183,11 +186,15 @@ namespace AirPlayer.App.Rendering
             const int maxStreamChangeRetries = 4; // 防御性上限
             for (int attempt = 0; attempt < maxStreamChangeRetries; attempt++)
             {
-                if (TryProcessOutput(out texture, out subresourceIndex))
+                if (TryProcessOutput(out texture, out subresourceIndex, out bool nm))
                     return true; // 成功取出解码纹理
 
                 if (!StreamChangeDetected)
-                    return false; // 非 STREAM_CHANGE 原因（如 NEED_MORE_INPUT），由调用方继续喂帧
+                {
+                    // 非 STREAM_CHANGE：nm 区分“需更多输入(正常)”与“真失败”，透出给上层用于丢帧判定
+                    needMoreInput = nm;
+                    return false;
+                }
 
                 // STREAM_CHANGE 已在 TryProcessOutput 内部处理并重新协商输出类型，
                 // 清除标志后立即重试 ProcessOutput
@@ -195,16 +202,18 @@ namespace AirPlayer.App.Rendering
                 DiagLog.Write($"[HWD] STREAM_CHANGE 重试 #{attempt + 1}");
             }
 
-            // 超过重试上限仍未成功，等待下一帧输入后再取
+            // 超过重试上限仍未成功，等待下一帧输入后再取（视为待定，不计丢帧）
             DiagLog.Write("[HWD] STREAM_CHANGE 重试次数耗尽，等待下一帧");
+            needMoreInput = true;
             return false;
         }
 
-        /// <summary>尝试从 MFT 取出一帧输出纹理</summary>
-        private bool TryProcessOutput(out ID3D11Texture2D? texture, out uint subresourceIndex)
+        /// <summary>尝试从 MFT 取出一帧输出纹理。needMore=true 表示仅需更多输入（正常），非失败。</summary>
+        private bool TryProcessOutput(out ID3D11Texture2D? texture, out uint subresourceIndex, out bool needMore)
         {
             texture = null;
             subresourceIndex = 0;
+            needMore = false;
 
             // 根据模式决定是否由调用方提供输出样本
             IMFSample? outputSample = null;
@@ -234,7 +243,8 @@ namespace AirPlayer.App.Rendering
             if (result.Code == MF_E_TRANSFORM_NEED_MORE_INPUT)
             {
                 outputSample?.Dispose();
-                return false; // 正常：喂更多数据后再取
+                needMore = true;
+                return false; // 正常：帧已被接收，喂更多数据后再取（非丢帧）
             }
 
             if (result.Code == MF_E_TRANSFORM_STREAM_CHANGE)

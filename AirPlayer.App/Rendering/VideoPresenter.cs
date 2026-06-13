@@ -271,10 +271,10 @@ namespace AirPlayer.App.Rendering
                     for (int i = 0; i < batch.Count; i++)
                     {
                         bool present = (i == batch.Count - 1) && ShouldPresentNow();
-                        if (ProcessFrame(batch[i], present))
+                        if (ProcessFrame(batch[i], present, out bool needMore))
                             _decodedFrameCount++;
-                        else
-                            _skippedFrameCount++; // 偶发解码失败：跳过该帧继续，不强制等 IDR（镜像流极少再发 IDR）
+                        else if (!needMore)
+                            _skippedFrameCount++; // 仅真实解码失败计丢帧；NEED_MORE 是流水线延迟（帧已接收），不计
                     }
 
                     // 周期性诊断：每 120 帧输出一次解码/跳过统计
@@ -309,9 +309,11 @@ namespace AirPlayer.App.Rendering
         }
 
         /// <summary>处理单帧：解码 → 检查 Resize → [可选] Blt → Present。</summary>
-        /// <returns>true=解码成功（参考链有效）；false=解码失败（调用方应等待下一个 IDR）。</returns>
-        private bool ProcessFrame(H264Data frame, bool present = true)
+        /// <param name="needMoreInput">输出：true 表示帧已被解码器接收但尚未产出（流水线延迟，属正常，非丢帧）。</param>
+        /// <returns>true=成功产出并（按需）呈现一帧；false=未产出（由 needMoreInput 区分正常待定与真失败）。</returns>
+        private bool ProcessFrame(H264Data frame, bool present, out bool needMoreInput)
         {
+            needMoreInput = false;
             // ── 分辨率变化检测（iOS 旋转）───────────────────────────────
             // 仅在 IDR 帧（type=5）时才做分辨率变化检测：
             // AirPlay 镜像中，新 SPS/PPS 到达后 session.WidthSource/HeightSource 立即更新，
@@ -342,7 +344,7 @@ namespace AirPlayer.App.Rendering
             }
 
             // ── 解码（硬件路径）──────────────────────────────────────────
-            bool got = _decoder!.TryDecode(frame.Data, out ID3D11Texture2D? nv12Tex, out uint subIdx);
+            bool got = _decoder!.TryDecode(frame.Data, out ID3D11Texture2D? nv12Tex, out uint subIdx, out needMoreInput);
 
             // 解码器输出格式变化（含分辨率变化）：仅重建 VideoProcessor 适配新源尺寸
             if (_decoder.ConsumeStreamChange())
