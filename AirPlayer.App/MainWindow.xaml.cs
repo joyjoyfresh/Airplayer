@@ -60,6 +60,7 @@ namespace AirPlayer.App
 
         // ===== 音频播放管线 =====
         private AudioSink? _audioSink;                // 音频播放器
+        private Mp4Recorder? _recorder;               // 录像录音器
 
         // ===== v0.3 体验：设置 / HUD / 控制条自动隐藏 =====
         private readonly AppSettings _settings = AppSettings.Load();   // 持久化设置
@@ -152,6 +153,59 @@ namespace AirPlayer.App
             catch
             {
                 return Windows.UI.Color.FromArgb(255, 0, 230, 118); // 默认绿色
+            }
+        }
+
+        private void RecordMenuItem_Click(object sender, RoutedEventArgs e) => ToggleRecording();
+
+        private void ToggleRecording()
+        {
+            if (_recorder != null)
+            {
+                _recorder.Stop();
+                _recorder.Dispose();
+                _recorder = null;
+                if (RecordMenuItem != null) RecordMenuItem.IsChecked = false;
+                ShowToast("录像已保存");
+            }
+            else
+            {
+                try
+                {
+                    _recorder = new Mp4Recorder();
+                    var defaultVideoDir = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "AirPlayer");
+                    var videoDir = _settings.VideoSavePath ?? defaultVideoDir;
+
+                    // 检查并自动创建目录
+                    try
+                    {
+                        if (!System.IO.Directory.Exists(videoDir))
+                        {
+                            System.IO.Directory.CreateDirectory(videoDir);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        DiagLog.Write($"[UI] 创建自定义录像路径失败: {videoDir}, {ex.Message}。降级到默认路径");
+                        videoDir = defaultVideoDir;
+                        System.IO.Directory.CreateDirectory(videoDir);
+                    }
+
+                    string filePath = System.IO.Path.Combine(videoDir, $"record_{DateTime.Now:yyyyMMdd_HHmmss}.mp4");
+
+                    _recorder.Start(filePath, _videoWidth, _videoHeight);
+                    if (RecordMenuItem != null) RecordMenuItem.IsChecked = true;
+                    ShowToast("开始录制视频...");
+                }
+                catch (Exception ex)
+                {
+                    ShowToast("启动录制失败");
+                    DiagLog.Write($"[UI] 启动录制异常: {ex.Message}");
+                    _recorder?.Dispose();
+                    _recorder = null;
+                    if (RecordMenuItem != null) RecordMenuItem.IsChecked = false;
+                }
             }
         }
 
@@ -252,14 +306,7 @@ namespace AirPlayer.App
             nameContainer.Children.Add(nameBox);
             nameContainer.Children.Add(nameTip);
 
-            // 2. HUD 设置 Section Header
-            var hudHeader = new TextBlock 
-            { 
-                Text = "HUD 实时监控参数设置", 
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
-                Margin = new Thickness(0, 8, 0, 0) 
-            };
-
+            // 2. HUD 设置
             // HUD 字体大小 Slider
             var hudSizeSlider = new Slider
             {
@@ -312,26 +359,26 @@ namespace AirPlayer.App
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
 
-            var hudContainer = new StackPanel { Spacing = 10 };
-            hudContainer.Children.Add(hudHeader);
+            var hudContainer = new StackPanel { Spacing = 10, Margin = new Thickness(0, 0, 0, 4) };
             hudContainer.Children.Add(hudSizeSlider);
             hudContainer.Children.Add(colorCombo);
             hudContainer.Children.Add(hudOpacitySlider);
 
+            var hudExpander = new Microsoft.UI.Xaml.Controls.Expander
+            {
+                Header = "HUD 监控参数设置",
+                Content = hudContainer,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                IsExpanded = false
+            };
+
             // 3. 截图保存路径配置
             var screenshotHeader = new TextBlock 
             { 
-                Text = "截图设置", 
+                Text = "截图保存目录", 
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
-                Margin = new Thickness(0, 8, 0, 0) 
-            };
-
-            var pathLabel = new TextBlock
-            {
-                Text = "截图保存目录",
-                FontSize = 12,
-                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
-                Margin = new Thickness(0, 4, 0, 0)
+                Margin = new Thickness(0, 0, 0, 4) 
             };
 
             var defaultPath = System.IO.Path.Combine(
@@ -385,17 +432,147 @@ namespace AirPlayer.App
 
             var screenshotContainer = new StackPanel { Spacing = 6 };
             screenshotContainer.Children.Add(screenshotHeader);
-            screenshotContainer.Children.Add(pathLabel);
             screenshotContainer.Children.Add(pathGrid);
 
+            // 3.5 录像保存路径配置
+            var videoRecordHeader = new TextBlock 
+            { 
+                Text = "录像保存目录", 
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
+                Margin = new Thickness(0, 8, 0, 4) 
+            };
+
+            var defaultVideoPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "AirPlayer");
+
+            var videoPathGrid = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+            videoPathGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            videoPathGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var videoPathBox = new TextBox
+            {
+                Text = _settings.VideoSavePath ?? defaultVideoPath,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                PlaceholderText = defaultVideoPath
+            };
+
+            var videoBrowseBtn = new Button
+            {
+                Content = "浏览...",
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Bottom
+            };
+
+            Grid.SetColumn(videoPathBox, 0);
+            Grid.SetColumn(videoBrowseBtn, 1);
+            videoPathGrid.Children.Add(videoPathBox);
+            videoPathGrid.Children.Add(videoBrowseBtn);
+
+            videoBrowseBtn.Click += async (s, args) =>
+            {
+                try
+                {
+                    var folderPicker = new Windows.Storage.Pickers.FolderPicker();
+                    IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                    WinRT.Interop.InitializeWithWindow.Initialize(folderPicker, hWnd);
+                    folderPicker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.VideosLibrary;
+                    folderPicker.FileTypeFilter.Add("*");
+
+                    var folder = await folderPicker.PickSingleFolderAsync();
+                    if (folder != null)
+                    {
+                        videoPathBox.Text = folder.Path;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DiagLog.Write($"[UI] 启动文件夹选择器失败: {ex.Message}");
+                    ShowToast("打开文件夹选择失败");
+                }
+            };
+
+            var videoRecordContainer = new StackPanel { Spacing = 6 };
+            videoRecordContainer.Children.Add(videoRecordHeader);
+            videoRecordContainer.Children.Add(videoPathGrid);
+
+            var pathsContainer = new StackPanel { Spacing = 12, Margin = new Thickness(0, 0, 0, 4) };
+            pathsContainer.Children.Add(screenshotContainer);
+            pathsContainer.Children.Add(videoRecordContainer);
+
+            var pathsExpander = new Microsoft.UI.Xaml.Controls.Expander
+            {
+                Header = "文件保存位置设置",
+                Content = pathsContainer,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                IsExpanded = false
+            };
+
+            // 4. 音频输出设备配置
+            var audioHeader = new TextBlock 
+            { 
+                Text = "音频设置", 
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
+                Margin = new Thickness(0, 8, 0, 0) 
+            };
+
+            var audioDeviceCombo = new ComboBox
+            {
+                Header = "音频输出设备",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
+            // 添加系统默认设备选项
+            audioDeviceCombo.Items.Add("系统默认设备");
+            var deviceIds = new System.Collections.Generic.List<string?>();
+            deviceIds.Add(null); // 系统默认的 ID 对应 null
+
+            // 获取音频输出设备
+            try
+            {
+                var devices = await Windows.Devices.Enumeration.DeviceInformation.FindAllAsync(
+                    Windows.Media.Devices.MediaDevice.GetAudioRenderSelector());
+                int selectIdx = 0;
+                int idx = 1;
+                foreach (var device in devices)
+                {
+                    audioDeviceCombo.Items.Add(device.Name);
+                    deviceIds.Add(device.Id);
+                    if (device.Id == _settings.PreferredAudioDevice)
+                    {
+                        selectIdx = idx;
+                    }
+                    idx++;
+                }
+                audioDeviceCombo.SelectedIndex = selectIdx;
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[UI] 枚举音频设备失败: {ex.Message}");
+                audioDeviceCombo.SelectedIndex = 0; // 默认第一项（系统默认）
+            }
+
+            var audioContainer = new StackPanel { Spacing = 6 };
+            audioContainer.Children.Add(audioHeader);
+            audioContainer.Children.Add(audioDeviceCombo);
+
             stackPanel.Children.Add(nameContainer);
-            stackPanel.Children.Add(hudContainer);
-            stackPanel.Children.Add(screenshotContainer);
+            stackPanel.Children.Add(hudExpander);
+            stackPanel.Children.Add(pathsExpander);
+            stackPanel.Children.Add(audioContainer);
+
+            var scrollViewer = new Microsoft.UI.Xaml.Controls.ScrollViewer
+            {
+                Content = stackPanel,
+                VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Disabled,
+                MaxHeight = 450
+            };
 
             var dlg = new ContentDialog
             {
                 Title = "更多设置",
-                Content = stackPanel,
+                Content = scrollViewer,
                 PrimaryButtonText = "保存",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Primary,
@@ -435,9 +612,59 @@ namespace AirPlayer.App
                     }
                 }
 
+                // 3.5 保存录像路径
+                var videoPathInput = videoPathBox.Text?.Trim();
+                if (string.IsNullOrEmpty(videoPathInput) || videoPathInput.Equals(defaultVideoPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    _settings.VideoSavePath = null;
+                }
+                else
+                {
+                    try
+                    {
+                        var fullPath = System.IO.Path.GetFullPath(videoPathInput);
+                        _settings.VideoSavePath = fullPath;
+                    }
+                    catch (Exception ex)
+                    {
+                        ShowToast("录像路径格式不合法，未保存该项");
+                        DiagLog.Write($"[UI] 用户输入的录像保存路径不合法: {videoPathInput}, {ex.Message}");
+                    }
+                }
+
+                // 4. 保存音频输出设备设置
+                string? oldAudioDevice = _settings.PreferredAudioDevice;
+                int audioIdx = audioDeviceCombo.SelectedIndex;
+                string? newAudioDevice = null;
+                if (audioIdx >= 0 && audioIdx < deviceIds.Count)
+                {
+                    newAudioDevice = deviceIds[audioIdx];
+                }
+                _settings.PreferredAudioDevice = newAudioDevice;
+
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
                 _settings.Save();
+
+                // 如果音频设备改变，且当前正在投屏，实时重启 AudioSink
+                if (oldAudioDevice != _settings.PreferredAudioDevice)
+                {
+                    if (_audioSink != null && _isMirroringActive)
+                    {
+                        try
+                        {
+                            _audioSink.Dispose();
+                            _audioSink = new AudioSink(_settings.PreferredAudioDevice);
+                            _audioSink.Initialize();
+                            DiagLog.Write("[UI] 音频输出设备发生变化，已实时重启 AudioSink");
+                            ShowToast("音频设备已切换");
+                        }
+                        catch (Exception ex)
+                        {
+                            DiagLog.Write($"[UI] 实时切换音频设备异常: {ex.Message}");
+                        }
+                    }
+                }
 
                 // 提示反馈
                 if (_settings.DeviceName != oldName)

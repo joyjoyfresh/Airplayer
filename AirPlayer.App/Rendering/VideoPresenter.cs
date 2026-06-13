@@ -49,6 +49,9 @@ namespace AirPlayer.App.Rendering
         private bool _processorReady;
         private int _consecutiveErrors;
 
+        /// <summary>分辨率变化事件（在渲染线程触发，带宽高参数）</summary>
+        public event EventHandler<(int Width, int Height)>? ResolutionChanged;
+
         // ──────────────────────────────────────────────────────────────────
         // 常量
         // ──────────────────────────────────────────────────────────────────
@@ -265,6 +268,7 @@ namespace AirPlayer.App.Rendering
                 _videoHeight = frame.Height;
                 _decoder.Reset();
                 _processorReady = false; // 触发 VideoProcessor 重建
+                ResolutionChanged?.Invoke(this, (_videoWidth, _videoHeight));
             }
 
             // ── 首帧：初始化解码器 ────────────────────────────────────────
@@ -296,6 +300,7 @@ namespace AirPlayer.App.Rendering
                         DiagLog.Write($"[PRS] STREAM_CHANGE 实际分辨率 {_videoWidth}x{_videoHeight} → {texW}x{actualH}");
                         _videoWidth = texW;
                         _videoHeight = actualH;
+                        ResolutionChanged?.Invoke(this, (_videoWidth, _videoHeight));
                     }
                 }
                 // 释放缓存视图 → 用新 _videoWidth/_videoHeight 重建 VideoProcessor
