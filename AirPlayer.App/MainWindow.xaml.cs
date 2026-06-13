@@ -317,7 +317,7 @@ namespace AirPlayer.App
             {
                 Text = "HUD 监控参数设置",
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Margin = new Thickness(0, 4, 0, 0)
+                Margin = new Thickness(0, 8, 0, 0)
             };
 
             // 3. 截图保存路径配置
@@ -325,7 +325,7 @@ namespace AirPlayer.App
             { 
                 Text = "截图保存目录", 
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
-                Margin = new Thickness(0, 0, 0, 4) 
+                Margin = new Thickness(0, 8, 0, 4) 
             };
 
             var defaultPath = System.IO.Path.Combine(
@@ -451,12 +451,12 @@ namespace AirPlayer.App
             resolutionContainer.Children.Add(resolutionHeader);
             resolutionContainer.Children.Add(resolutionCombo);
 
-            stackPanel.Children.Add(nameContainer);     // 设备名称
-            stackPanel.Children.Add(hudSectionHeader);  // HUD 区块标题
-            stackPanel.Children.Add(hudContainer);      // HUD 参数控件
-            stackPanel.Children.Add(screenshotContainer); // 截图保存路径
-            stackPanel.Children.Add(audioContainer);    // 音频设备
-            stackPanel.Children.Add(resolutionContainer); // 视频分辨率
+            stackPanel.Children.Add(nameContainer);       // 1. 设备名称
+            stackPanel.Children.Add(resolutionContainer); // 2. 视频分辨率
+            stackPanel.Children.Add(audioContainer);      // 3. 音频设备
+            stackPanel.Children.Add(screenshotContainer); // 4. 截图保存路径
+            stackPanel.Children.Add(hudSectionHeader);    // 5. HUD 区块标题
+            stackPanel.Children.Add(hudContainer);        // 5. HUD 参数控件
 
             var scrollViewer = new Microsoft.UI.Xaml.Controls.ScrollViewer
             {
