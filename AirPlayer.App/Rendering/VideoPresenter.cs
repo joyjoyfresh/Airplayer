@@ -50,9 +50,6 @@ namespace AirPlayer.App.Rendering
         private int _panelWidth;
         private int _panelHeight;
         private bool _processorReady;
-        // 解码健康门控：为 true 时丢弃帧直到遇到 IDR（关键帧）才恢复解码。
-        // 初值 true：启动后先等待首个 IDR；解码失败后置 true，等下一个 IDR 重新对齐参考链，杜绝花屏。
-        private bool _awaitingKeyframe = true;
 
         /// <summary>分辨率变化事件（在渲染线程触发，带宽高参数）</summary>
         public event EventHandler<(int Width, int Height)>? ResolutionChanged;
@@ -254,8 +251,9 @@ namespace AirPlayer.App.Rendering
                     batch.Add(first);
                     while (reader.TryRead(out var n)) batch.Add(n);
 
-                    // ── 延迟控制：积压过多时跳到「最近的 IDR」重新起步 ─────────
-                    // 只在 IDR（完整 GOP 起点）处跳，绝不丢半截 GOP，从根上杜绝花屏。
+                    // ── 延迟控制（安全兜底）：仅当积压过多且批内存在 IDR 时，跳到最近 IDR ──
+                    // 镜像流通常只在开头发一个 IDR、之后全是 P 帧，故此处几乎不会触发；
+                    // 只有渲染长时间卡顿且恰好有新 IDR 时才跳，且只在 IDR（GOP 起点）处跳，不丢半截 GOP。
                     if (batch.Count > MaxBacklogFrames)
                     {
                         int lastIdr = batch.FindLastIndex(f => f.FrameType == 5);
@@ -264,35 +262,19 @@ namespace AirPlayer.App.Rendering
                             int original = batch.Count;
                             _skippedFrameCount += lastIdr;   // 整段陈旧 GOP 计入丢帧
                             batch.RemoveRange(0, lastIdr);   // 丢弃最近 IDR 之前的陈旧帧
-                            _awaitingKeyframe = false;        // 已对齐到 IDR
                             DiagLog.Write($"[PRS] 追帧：积压 {original} 帧，跳到最近 IDR，丢弃 {lastIdr} 帧");
                         }
-                        // 若积压里没有 IDR：无法安全跳过，全部解码（参考链完整，硬件解码很快追上）
+                        // 若积压里没有 IDR：全部按序解码（参考链完整，硬件解码很快追上）
                     }
 
-                    // ── 按序解码整批；仅最后一帧按节流决定是否呈现 ────────────
+                    // ── 按序解码整批，绝不中途丢帧（参考链完整 → 不花屏）；仅最后一帧按节流呈现 ──
                     for (int i = 0; i < batch.Count; i++)
                     {
-                        H264Data f = batch[i];
-
-                        // 健康门控：解码失败/启动后，丢弃残缺 GOP 帧，直到遇到 IDR 才恢复，杜绝花屏
-                        if (_awaitingKeyframe)
-                        {
-                            if (f.FrameType != 5) { _skippedFrameCount++; continue; }
-                            _awaitingKeyframe = false; // 命中 IDR，参考链可重新建立
-                        }
-
-                        // 仅最后一帧呈现，其余只解码以维护参考链；最后一帧再经帧率节流门控
                         bool present = (i == batch.Count - 1) && ShouldPresentNow();
-                        if (ProcessFrame(f, present))
-                        {
+                        if (ProcessFrame(batch[i], present))
                             _decodedFrameCount++;
-                        }
                         else
-                        {
-                            _skippedFrameCount++;
-                            _awaitingKeyframe = true; // 解码失败：等待下一个 IDR 重新对齐
-                        }
+                            _skippedFrameCount++; // 偶发解码失败：跳过该帧继续，不强制等 IDR（镜像流极少再发 IDR）
                     }
 
                     // 周期性诊断：每 120 帧输出一次解码/跳过统计
