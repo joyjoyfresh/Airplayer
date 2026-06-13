@@ -18,6 +18,7 @@ namespace AirPlayer.App
         private readonly object _writerLock = new object();
         private bool _isWriting;
         private bool _isDisposed;
+        private bool _hasVideoKeyFrame;
 
         /// <summary>当前是否正在进行录制</summary>
         public bool IsWriting => _isWriting;
@@ -93,6 +94,7 @@ namespace AirPlayer.App
                     // 7. 开始写入
                     _sinkWriter.BeginWriting();
                     _isWriting = true;
+                    _hasVideoKeyFrame = false;
 
                     DiagLog.Write($"[REC] 录屏启动: 尺寸={width}x{height}, 路径={filePath}");
                 }
@@ -119,6 +121,12 @@ namespace AirPlayer.App
             lock (_writerLock)
             {
                 if (!_isWriting) return;
+
+                if (!_hasVideoKeyFrame)
+                {
+                    if (!isKeyframe) return;
+                    _hasVideoKeyFrame = true;
+                }
 
                 IMFSample? sample = null;
                 try
@@ -161,6 +169,8 @@ namespace AirPlayer.App
             lock (_writerLock)
             {
                 if (!_isWriting) return;
+
+                if (!_hasVideoKeyFrame) return;
 
                 IMFSample? sample = null;
                 try

@@ -701,6 +701,7 @@ namespace AirPlayer.App
 
             var visibility = _isMirroringActive ? Visibility.Visible : Visibility.Collapsed;
             ScreenshotMenuItem.Visibility = visibility;
+            RecordMenuItem.Visibility = visibility;
             RotateMenuItem.Visibility = visibility;
             FullScreenMenuItem.Visibility = visibility;
             ExitMirroringMenuItem.Visibility = visibility;
@@ -929,6 +930,23 @@ namespace AirPlayer.App
                 _audioSink?.Dispose();
                 _audioSink = null;
 
+                // 如果录屏还在进行中，强制停止并释放
+                if (_recorder != null)
+                {
+                    try
+                    {
+                        _recorder.Stop();
+                        _recorder.Dispose();
+                        DiagLog.Write("[UI] 投屏结束，强制停止录像并保存完成");
+                    }
+                    catch (Exception ex)
+                    {
+                        DiagLog.Write($"[UI] 投屏结束强制停止录像异常: {ex.Message}");
+                    }
+                    _recorder = null;
+                    if (RecordMenuItem != null) RecordMenuItem.IsChecked = false;
+                }
+
                 // 投屏结束：恢复菜单按钮常显，重置 HUD 计数
                 _controlHideTimer?.Stop();
                 MenuButton.Visibility = Visibility.Visible;
@@ -950,6 +968,9 @@ namespace AirPlayer.App
                 AudioDiagLog.Write($"[UI-PCM] #{_pcmFrameCount}: len={pcmData.Length} pts={pcmData.Pts} sink={(_audioSink != null ? "ok" : "null")}");
             _pcmFrameCount++;
             _audioSink?.EnqueueFrame(pcmData);
+
+            // 写入录像
+            _recorder?.WriteAudioFrame(pcmData.Data, pcmData.Length, (long)pcmData.Pts);
         }
 
         private long _pcmFrameCount;
@@ -964,6 +985,9 @@ namespace AirPlayer.App
         private void Receiver_OnH264DataReceived(object? sender, H264Data data)
         {
             if (!_isMirroringActive) return;
+
+            // 写入录像
+            _recorder?.WriteVideoFrame(data.Data, data.Length, data.Pts, data.FrameType == 5);
 
             // 诊断：记录首帧到达
             if (!_firstFrameLogged)
@@ -1328,6 +1352,11 @@ namespace AirPlayer.App
                 TakeScreenshot();
                 e.Handled = true;
             }
+            else if (e.Key == Windows.System.VirtualKey.V && _isMirroringActive && !IsTextInputFocused())
+            {
+                ToggleRecording();
+                e.Handled = true;
+            }
         }
 
         /// <summary>当前焦点是否在文本输入控件上（避免单字母快捷键打断输入）。</summary>
@@ -1490,6 +1519,17 @@ namespace AirPlayer.App
             _receiver?.Dispose();  // 释放接收器
             StopVideoPipeline();   // 释放视频管线
             _audioSink?.Dispose(); // 释放音频播放器
+
+            if (_recorder != null)
+            {
+                try
+                {
+                    _recorder.Stop();
+                    _recorder.Dispose();
+                }
+                catch {}
+                _recorder = null;
+            }
         }
     }
 }
