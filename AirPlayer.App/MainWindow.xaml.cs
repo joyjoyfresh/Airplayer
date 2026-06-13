@@ -556,18 +556,16 @@ namespace AirPlayer.App
                 (_appWindow?.Presenter as OverlappedPresenter)?.IsAlwaysOnTop ?? _settings.AlwaysOnTop;
 
             var visibility = _isMirroringActive ? Visibility.Visible : Visibility.Collapsed;
-            ScreenshotMenuItem.Visibility = visibility;
-            RotateMenuItem.Visibility = visibility;
-            FullScreenMenuItem.Visibility = visibility;
+            FullScreenMenuItem.Visibility    = visibility;
+            RotateMenuItem.Visibility        = visibility;
+            ScreenshotMenuItem.Visibility    = visibility;
             ExitMirroringMenuItem.Visibility = visibility;
             ActiveCastingSeparator.Visibility = visibility;
 
-            // 铺满屏幕仅在「投屏中 + 全屏」时才有意义，独立分栏显示
+            // 铺满屏幕仅在「投屏中 + 全屏」时才有意义
             var fillVisibility = (_isMirroringActive && _isFullScreen) ? Visibility.Visible : Visibility.Collapsed;
-            FillScreenSeparatorTop.Visibility    = fillVisibility;
-            FillScreenMenuItem.Visibility        = fillVisibility;
-            FillScreenMenuItem.IsChecked         = _settings.FillScreen;
-            FillScreenSeparatorBottom.Visibility = fillVisibility;
+            FillScreenMenuItem.Visibility = fillVisibility;
+            FillScreenMenuItem.IsChecked  = _settings.FillScreen;
         }
 
         /// <summary>菜单「退出投屏」按钮点击事件。</summary>
@@ -1162,7 +1160,7 @@ namespace AirPlayer.App
         /// <summary>全屏切换按钮</summary>
         private void FullScreenButton_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
 
-        /// <summary>键盘快捷键：F11 切换全屏，Escape 退出全屏，R 旋转画面，H 切换 HUD，S 截图，T 窗口置顶，Q 退出投屏</summary>
+        /// <summary>键盘快捷键：F11 切换全屏，Escape 退出全屏，R 旋转画面，H 切换 HUD，S 屏幕截图，T 窗口置顶，Q 退出投屏，F 铺满屏幕（全屏投屏时）</summary>
         private void MainWindow_KeyDown(object sender, KeyRoutedEventArgs e)
         {
             if (e.Key == Windows.System.VirtualKey.F11)
@@ -1198,6 +1196,14 @@ namespace AirPlayer.App
             else if (e.Key == Windows.System.VirtualKey.S && !IsTextInputFocused())
             {
                 TakeScreenshot();
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.F && _isMirroringActive && _isFullScreen && !IsTextInputFocused())
+            {
+                _settings.FillScreen = !_settings.FillScreen;
+                _settings.Save();
+                _presenter?.SetFillMode(_settings.FillScreen);
+                ShowToast(_settings.FillScreen ? "铺满屏幕" : "显示完整");
                 e.Handled = true;
             }
 

@@ -137,30 +137,27 @@
                             Opening="MainMenuFlyout_Opening"
                             Opened="MainMenuFlyout_Opened"
                             Closed="MainMenuFlyout_Closed">
-                    <MenuFlyoutItem x:Name="ScreenshotMenuItem" Text="截图 (S)" Click="ScreenshotButton_Click">
-                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE722;"/></MenuFlyoutItem.Icon>
+                    <MenuFlyoutItem x:Name="FullScreenMenuItem" Text="切换全屏 (F11)" Click="FullScreenButton_Click">
+                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE740;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-
                     <MenuFlyoutItem x:Name="RotateMenuItem" Text="旋转画面 (R)" Click="RotateButton_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE777;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <MenuFlyoutSeparator x:Name="FillScreenSeparatorTop"/>
-                    <ToggleMenuFlyoutItem x:Name="FillScreenMenuItem" Text="铺满屏幕" Click="FillScreenMenuItem_Click">
-                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE744;"/></ToggleMenuFlyoutItem.Icon>
-                    </ToggleMenuFlyoutItem>
-                    <MenuFlyoutSeparator x:Name="FillScreenSeparatorBottom"/>
-                    <MenuFlyoutItem x:Name="FullScreenMenuItem" Text="切换全屏 (F11)" Click="FullScreenButton_Click">
-                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE740;"/></MenuFlyoutItem.Icon>
+                    <MenuFlyoutItem x:Name="ScreenshotMenuItem" Text="屏幕截图 (S)" Click="ScreenshotButton_Click">
+                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE722;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutItem x:Name="ExitMirroringMenuItem" Text="退出投屏 (Q)" Click="ExitMirroringMenuItem_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE711;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutSeparator x:Name="ActiveCastingSeparator"/>
-                    <ToggleMenuFlyoutItem x:Name="HudMenuItem" Text="显示 HUD (H)" Click="HudMenuItem_Click">
-                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE9D9;"/></ToggleMenuFlyoutItem.Icon>
+                    <ToggleMenuFlyoutItem x:Name="FillScreenMenuItem" Text="铺满屏幕 (F)" Click="FillScreenMenuItem_Click">
+                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE744;"/></ToggleMenuFlyoutItem.Icon>
                     </ToggleMenuFlyoutItem>
                     <ToggleMenuFlyoutItem x:Name="AlwaysOnTopMenuItem" Text="窗口置顶 (T)" Click="AlwaysOnTopMenuItem_Click">
                         <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE718;"/></ToggleMenuFlyoutItem.Icon>
+                    </ToggleMenuFlyoutItem>
+                    <ToggleMenuFlyoutItem x:Name="HudMenuItem" Text="显示 HUD (H)" Click="HudMenuItem_Click">
+                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE9D9;"/></ToggleMenuFlyoutItem.Icon>
                     </ToggleMenuFlyoutItem>
                     <MenuFlyoutSeparator/>
                     <MenuFlyoutItem Text="更多设置…" Click="SettingsMenuItem_Click">
