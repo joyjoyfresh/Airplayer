@@ -108,6 +108,39 @@ namespace AirPlayer.App.Rendering
         }
 
         // ──────────────────────────────────────────────────────────────────
+        // 公开：运行统计（供 HUD 显示）
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>视频管线运行统计快照（供 UI 线程读取，计数为单调递增，跨线程读取无害）。</summary>
+        public readonly struct VideoStats
+        {
+            public readonly int Width;
+            public readonly int Height;
+            public readonly int Decoded;
+            public readonly int Presented;
+            public readonly int Skipped;
+            public VideoStats(int width, int height, int decoded, int presented, int skipped)
+            {
+                Width = width; Height = height; Decoded = decoded; Presented = presented; Skipped = skipped;
+            }
+        }
+
+        /// <summary>获取当前运行统计快照。</summary>
+        public VideoStats GetStats() =>
+            new VideoStats(_videoWidth, _videoHeight, _decodedFrameCount, _presentCount, _skippedFrameCount);
+
+        // 截图请求（由 UI 线程置位，渲染线程在下一帧 Present 前执行）
+        private volatile bool _screenshotPending;
+        private string? _screenshotPath;
+
+        /// <summary>请求把下一帧画面保存为 PNG（线程安全）。</summary>
+        public void RequestScreenshot(string path)
+        {
+            _screenshotPath = path;
+            _screenshotPending = true;
+        }
+
+        // ──────────────────────────────────────────────────────────────────
         // 公开：投递帧
         // ──────────────────────────────────────────────────────────────────
 
@@ -299,6 +332,13 @@ namespace AirPlayer.App.Rendering
 
                     _processor!.Blt(nv12Tex!, subIdx, backBuf);
 
+                    // 截图：在 Present 前从后台缓冲抓取当前帧（此时已是渲染完成的画面）
+                    if (_screenshotPending && _screenshotPath != null)
+                    {
+                        CaptureScreenshot(backBuf, _screenshotPath);
+                        _screenshotPending = false;
+                    }
+
                     Result presentHr = _swapChain.SwapChain.Present(1, 0); // 1=等垂直同步
                     // 诊断：首次 Present 成功及每 60 帧记录一次
                     _presentCount++;
@@ -351,6 +391,58 @@ namespace AirPlayer.App.Rendering
             {
                 DiagLog.Write($"[PRS] Resize 失败: {ex.Message}，保持当前状态");
                 _processorReady = true; // 防止每帧重试导致错误循环
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // 截图
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 从后台缓冲抓取当前帧并保存为 PNG。在渲染线程调用（持有 D3D 上下文）。
+        /// 复制到 Staging 纹理 → Map 读出 BGRA → System.Drawing 编码 PNG。
+        /// </summary>
+        private void CaptureScreenshot(ID3D11Texture2D source, string path)
+        {
+            try
+            {
+                var d = source.Description;
+                var stagingDesc = new Texture2DDescription
+                {
+                    Width = d.Width,
+                    Height = d.Height,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = d.Format,
+                    SampleDescription = d.SampleDescription,
+                    Usage = ResourceUsage.Staging,
+                    BindFlags = BindFlags.None,
+                    CPUAccessFlags = CpuAccessFlags.Read,
+                    MiscFlags = ResourceOptionFlags.None
+                };
+
+                using ID3D11Texture2D staging = _gpu!.Device.CreateTexture2D(stagingDesc);
+                _gpu.DeviceContext.CopyResource(staging, source);
+
+                var map = _gpu.DeviceContext.Map(staging, 0, MapMode.Read, MapFlags.None);
+                try
+                {
+                    // 后台缓冲为 B8G8R8A8，GDI+ 用 Format32bppRgb（忽略 Alpha，得到不透明图）
+                    using var bmp = new System.Drawing.Bitmap(
+                        (int)d.Width, (int)d.Height, (int)map.RowPitch,
+                        System.Drawing.Imaging.PixelFormat.Format32bppRgb, map.DataPointer);
+                    bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+                }
+                finally
+                {
+                    _gpu.DeviceContext.Unmap(staging, 0);
+                }
+
+                DiagLog.Write($"[PRS] 截图已保存: {path}");
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[PRS] 截图失败: {ex.Message}");
             }
         }
 

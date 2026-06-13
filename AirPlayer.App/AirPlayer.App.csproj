@@ -39,4 +39,20 @@
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.22621.756" />
     <!-- Media Foundation 托管封装：用于调用系统 H264 硬件解码器 -->
     <PackageReference Include="Vortice.MediaFoundation" Version="3.6.2" />
-   
+    <!-- Vortice D3D11/DXGI 托管封装：全 GPU 管线（硬件解码 → 视频处理 → 交换链呈现） -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+    <PackageReference Include="Vortice.DXGI" Version="3.6.2" />
+    <!-- 截图：把后台缓冲 BGRA 像素编码为 PNG（Windows 桌面） -->
+    <PackageReference Include="System.Drawing.Common" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- 原生库：把 native\ 下的 fdk-aac DLL（AAC-ELD 解码必需）自动拷到输出目录。
+       只匹配 *fdk*.dll，避免误拷其它无关 DLL。
+       放置方式：把 fdk-aac.dll 放进 AirPlayer.App\native\，或运行 tools\get-fdk-aac.ps1 自动获取。 -->
+  <ItemGroup>
+    <None Include="native\*fdk*.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
+</Project>

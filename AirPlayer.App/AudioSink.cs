@@ -445,4 +445,41 @@ namespace AirPlayer.App
 
             // 唤醒并结束播放线程
             _dataEvent?.Set();
-        
+            _waveEvent?.Set();
+            try { _playbackThread?.Join(1000); } catch { }
+            _playbackThread = null;
+
+            lock (_lock)
+            {
+                if (_hWaveOut != IntPtr.Zero)
+                {
+                    waveOutReset(_hWaveOut);
+                    for (int i = 0; i < NUM_BUFFERS; i++)
+                    {
+                        if (_hdrPtr[i] != IntPtr.Zero)
+                            UnprepareIfNeeded(i);
+                    }
+                    waveOutClose(_hWaveOut);
+                    _hWaveOut = IntPtr.Zero;
+                }
+
+                for (int i = 0; i < NUM_BUFFERS; i++)
+                {
+                    if (_bufferHandles[i].IsAllocated) _bufferHandles[i].Free();
+                    if (_hdrPtr[i] != IntPtr.Zero)
+                    {
+                        Marshal.FreeHGlobal(_hdrPtr[i]);
+                        _hdrPtr[i] = IntPtr.Zero;
+                    }
+                }
+            }
+
+            _waveEvent?.Dispose();
+            _dataEvent?.Dispose();
+
+            while (_frameQueue.TryDequeue(out _)) { }
+
+            DiagLog.Write("[AUDIO] AudioSink 已释放");
+        }
+    }
+}

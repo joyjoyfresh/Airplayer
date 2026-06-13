@@ -292,4 +292,80 @@ namespace AirPlayer.Protocol.Decoders
                 // 从流信息读取帧大小与声道数，计算输出字节数
                 IntPtr info = aacDecoder_GetStreamInfo(_handle);
                 if (info == IntPtr.Zero) return 0;
-                int frameSize = Mar
+                int frameSize = Marshal.ReadInt32(info, 4);   // 第 2 个 int：frameSize（每声道样本数）
+                int numCh = Marshal.ReadInt32(info, 8);       // 第 3 个 int：numChannels
+                if (frameSize <= 0 || numCh <= 0) return 0;
+
+                int outBytes = frameSize * numCh * 2;         // 16-bit → 每样本 2 字节
+                if (outBytes > _pcm.Length * 2) outBytes = _pcm.Length * 2; // 安全钳制
+
+                // 输出缓冲不足则扩容
+                if (output == null || output.Length < outBytes)
+                    output = new byte[outBytes];
+
+                // 拷出 PCM
+                Buffer.BlockCopy(_pcm, 0, output, 0, outBytes);
+
+                _decOk++;
+                // 首帧及每 500 帧打一条成功统计，确认音频链路畅通
+                if (_decOk == 1 || _decOk % 500 == 0)
+                    DiagLog.Write($"[FDK] 解码OK 累计成功={_decOk} 失败={_decErr} 本帧 in={inLen} out={outBytes} (frame={frameSize}x{numCh})");
+                return outBytes;
+            }
+            catch (Exception ex)
+            {
+                _decErr++;
+                if (_decErr == 1 || _decErr % 200 == 0)
+                    DiagLog.Write($"[FDK] DecodeFrame 异常: {ex.GetType().Name}: {ex.Message}");
+                return -1;
+            }
+        }
+
+        // 节流记录解码错误
+        private void LogDecErr(string stage, int code, int inLen)
+        {
+            _decErr++;
+            if (_decErr == 1 || _decErr % 200 == 0)
+                DiagLog.Write($"[FDK] {stage} 失败: 0x{code:X4} ({ErrName(code)}) inLen={inLen} 累计失败={_decErr}");
+        }
+
+        // 常见 FDK 错误码名称（便于日志阅读）
+        private static string ErrName(int code) => code switch
+        {
+            0x0000 => "OK",
+            0x1001 => "TRANSPORT_SYNC_ERROR",
+            0x1002 => "NOT_ENOUGH_BITS",
+            0x2001 => "INVALID_HANDLE",
+            0x2002 => "UNSUPPORTED_AOT",
+            0x2003 => "UNSUPPORTED_FORMAT",
+            0x2004 => "UNSUPPORTED_ER_FORMAT",
+            0x2005 => "UNSUPPORTED_EPCONFIG",
+            0x2006 => "UNSUPPORTED_MULTILAYER",
+            0x2007 => "UNSUPPORTED_CHANNELCONFIG",
+            0x2008 => "UNSUPPORTED_SAMPLINGRATE",
+            0x2009 => "INVALID_SBR_CONFIG",
+            0x200A => "SET_PARAM_FAIL",
+            0x200C => "OUTPUT_BUFFER_TOO_SMALL",
+            0x4001 => "TRANSPORT_ERROR",
+            0x4002 => "PARSE_ERROR",
+            0x4004 => "DECODE_FRAME_ERROR",
+            0x4005 => "CRC_ERROR",
+            _ => "UNKNOWN"
+        };
+
+        // 释放原生与固定资源
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            if (_handle != IntPtr.Zero)
+            {
+                try { aacDecoder_Close(_handle); } catch { }
+                _handle = IntPtr.Zero;
+            }
+            if (_ascHandle.IsAllocated) _ascHandle.Free();
+            if (_inHandle.IsAllocated) _inHandle.Free();
+        }
+    }
+}

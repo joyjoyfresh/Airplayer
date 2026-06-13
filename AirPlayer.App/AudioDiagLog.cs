@@ -49,4 +49,12 @@ namespace AirPlayer.App
                 lock (_lock)
                 {
                     _writer?.WriteLine($"=== AudioDiagLog ended at {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} ===");
-         
+                    _writer?.Flush();
+                    _writer?.Dispose();
+                    _writer = null;
+                }
+            }
+            catch { }
+        }
+    }
+}

@@ -93,21 +93,55 @@
                         <TextBlock x:Name="DeviceNameText" Text="AirPlayer" Foreground="#00E676" FontWeight="SemiBold" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
                     </StackPanel>
                 </Border>
+
+                <!-- 本机局域网 IP，方便确认在同一网络 -->
+                <TextBlock x:Name="IpText" Text="" Foreground="#6868A0" FontSize="13" HorizontalAlignment="Center" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
             </StackPanel>
         </Grid>
         
-        <!-- 右上角悬浮控制按钮 -->
-        <StackPanel 
-            VerticalAlignment="Top" 
-            HorizontalAlignment="Right" 
-            Orientation="Horizontal" 
+        <!-- 左上角实时 HUD（默认隐藏，可在设置或按 H 切换）-->
+        <Border x:Name="HudPanel"
+                Visibility="Collapsed"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Margin="20"
+                Background="#90000000"
+                CornerRadius="8"
+                Padding="12,8">
+            <TextBlock x:Name="HudText"
+                       Foreground="#00E676"
+                       FontFamily="Consolas, Cascadia Mono"
+                       FontSize="13"
+                       Text="HUD"/>
+        </Border>
+
+        <!-- 右上角悬浮控制条（鼠标空闲时自动隐藏）-->
+        <StackPanel
+            x:Name="ControlBar"
+            VerticalAlignment="Top"
+            HorizontalAlignment="Right"
+            Orientation="Horizontal"
             Spacing="8"
             Margin="20">
+            <!-- HUD 开关 -->
+            <Button
+                x:Name="HudButton"
+                Content="&#xE9D9;"
+                FontFamily="Segoe MDL2 Assets"
+                FontSize="16"
+                Foreground="White"
+                Background="#30000000"
+                BorderThickness="0"
+                Width="40"
+                Height="40"
+                CornerRadius="20"
+                Click="HudButton_Click"
+                ToolTipService.ToolTip="显示/隐藏 HUD (H)"/>
             <!-- 旋转按钮 -->
-            <Button 
+            <Button
                 x:Name="RotateButton"
-                Content="&#xE777;" 
-                FontFamily="Segoe MDL2 Assets" 
+                Content="&#xE777;"
+                FontFamily="Segoe MDL2 Assets"
                 FontSize="16"
                 Foreground="White"
                 Background="#30000000"
@@ -118,10 +152,10 @@
                 Click="RotateButton_Click"
                 ToolTipService.ToolTip="旋转画面 (R)"/>
             <!-- 全屏按钮 -->
-            <Button 
+            <Button
                 x:Name="FullScreenButton"
-                Content="&#xE740;" 
-                FontFamily="Segoe MDL2 Assets" 
+                Content="&#xE740;"
+                FontFamily="Segoe MDL2 Assets"
                 FontSize="16"
                 Foreground="White"
                 Background="#30000000"
@@ -131,6 +165,60 @@
                 CornerRadius="20"
                 Click="FullScreenButton_Click"
                 ToolTipService.ToolTip="切换全屏 (F11)"/>
+            <!-- 截图按钮 -->
+            <Button
+                x:Name="ScreenshotButton"
+                Content="&#xE722;"
+                FontFamily="Segoe MDL2 Assets"
+                FontSize="16"
+                Foreground="White"
+                Background="#30000000"
+                BorderThickness="0"
+                Width="40"
+                Height="40"
+                CornerRadius="20"
+                Click="ScreenshotButton_Click"
+                ToolTipService.ToolTip="截图 (S)"/>
+            <!-- 设置按钮（含浮窗）-->
+            <Button
+                x:Name="SettingsButton"
+                Content="&#xE713;"
+                FontFamily="Segoe MDL2 Assets"
+                FontSize="16"
+                Foreground="White"
+                Background="#30000000"
+                BorderThickness="0"
+                Width="40"
+                Height="40"
+                CornerRadius="20"
+                ToolTipService.ToolTip="设置">
+                <Button.Flyout>
+                    <Flyout>
+                        <StackPanel Width="220" Spacing="14">
+                            <TextBlock Text="设置" FontWeight="Bold" FontSize="16"/>
+                            <ToggleSwitch x:Name="AlwaysOnTopToggle" Header="窗口置顶" Toggled="AlwaysOnTopToggle_Toggled"/>
+                            <ToggleSwitch x:Name="HudToggle" Header="显示 HUD" Toggled="HudToggle_Toggled"/>
+                            <TextBlock Text="设备名称（重启生效）" FontSize="13" Foreground="#888"/>
+                            <TextBox x:Name="DeviceNameBox" PlaceholderText="留空则用计算机名" LostFocus="DeviceNameBox_LostFocus"/>
+                        </StackPanel>
+                    </Flyout>
+                </Button.Flyout>
+            </Button>
         </StackPanel>
+
+        <!-- 底部居中的瞬时提示（截图等操作反馈）-->
+        <Border x:Name="ToastPanel"
+                Visibility="Collapsed"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,48"
+                Background="#CC1A1530"
+                BorderBrush="#302550"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="18,10">
+            <TextBlock x:Name="ToastText" Foreground="White" FontSize="14"
+                       FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+        </Border>
     </Grid>
 </Window>

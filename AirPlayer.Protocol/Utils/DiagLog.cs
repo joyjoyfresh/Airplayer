@@ -67,4 +67,10 @@ namespace AirPlayer.Protocol.Utils
                         File.WriteAllText(LogPath, string.Empty); // 清空文件
                         _sessionCleared = true;
                     }
-                    File.AppendAllText(LogPath, $"{DateTime.Now:HH:mm:ss.fff} {mes
+                    File.AppendAllText(LogPath, $"{DateTime.Now:HH:mm:ss.fff} {message}\n"); // 追加写入
+                }
+            }
+            catch { /* 诊断日志失败不影响主流程 */ }
+        }
+    }
+}

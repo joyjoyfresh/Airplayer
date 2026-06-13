@@ -54,3 +54,10 @@ venv/
 # Custom
 test/
 outputs*/
+
+# Native libraries (binary deps, fetched per-machine; not committed)
+AirPlayer.App/native/*.dll
+
+# Release output
+publish/
+*.zip

@@ -1,4 +1,6 @@
 using System;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -53,6 +55,14 @@ namespace AirPlayer.App
         // ===== 音频播放管线 =====
         private AudioSink? _audioSink;                // 音频播放器
 
+        // ===== v0.3 体验：设置 / HUD / 控制条自动隐藏 =====
+        private readonly AppSettings _settings = AppSettings.Load();   // 持久化设置
+        private DispatcherTimer? _hudTimer;            // HUD 刷新定时器（1s）
+        private DispatcherTimer? _controlHideTimer;    // 控制条自动隐藏定时器（3s）
+        private DispatcherTimer? _toastTimer;          // 瞬时提示自动消失定时器
+        private int _lastPresentedForFps;              // 上次呈现帧计数（算 FPS）
+        private bool _suppressSettingsEvents;          // 初始化时抑制开关回调
+
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
         {
@@ -66,21 +76,196 @@ namespace AirPlayer.App
             this.Title = "AirPlayer Receiver";
             this.Closed += MainWindow_Closed;
 
-            // 注册全局键盘快捷键（F11/Escape）
+            // 注册全局键盘快捷键（F11/Escape/R/H）
             this.Content.KeyDown += MainWindow_KeyDown;
 
             // 监听主网格尺寸变化，用于旋转时同步面板尺寸
             MainGrid.SizeChanged += MainGrid_SizeChanged;
 
-            // 默认设备名取本机计算机名
-            string hostName = Environment.MachineName;
+            // 设备名：优先用设置里的自定义名，否则用计算机名
+            string hostName = string.IsNullOrWhiteSpace(_settings.DeviceName)
+                ? Environment.MachineName : _settings.DeviceName!;
             DeviceNameText.Text = hostName;
+
+            // 待机页显示本机局域网 IP
+            string ip = GetLocalIPv4();
+            IpText.Text = string.IsNullOrEmpty(ip) ? "" : $"本机 IP：{ip}";
+
+            // 应用持久化设置（置顶 / HUD），并同步设置浮窗开关状态
+            ApplySettings();
+
+            // HUD 刷新定时器（始终运行，仅在 HUD 可见时更新文本）
+            _hudTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _hudTimer.Tick += HudTimer_Tick;
+            _hudTimer.Start();
+
+            // 控制条自动隐藏：鼠标移动显示并重置 3s 隐藏定时器（仅投屏时隐藏）
+            _controlHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            _controlHideTimer.Tick += ControlHideTimer_Tick;
+            MainGrid.PointerMoved += MainGrid_PointerMoved;
 
             // 启动等待页脉动动画
             if (MainGrid.Resources.TryGetValue("PulseStoryboard", out object sbObj) && sbObj is Storyboard sb)
                 sb.Begin();
 
             StartReceiver(hostName);
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // v0.3：设置 / HUD / 控制条
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>应用持久化设置到窗口与开关控件。</summary>
+        private void ApplySettings()
+        {
+            _suppressSettingsEvents = true;
+            try
+            {
+                if (_appWindow?.Presenter is OverlappedPresenter op)
+                    op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+                AlwaysOnTopToggle.IsOn = _settings.AlwaysOnTop;
+                HudToggle.IsOn = _settings.ShowHud;
+                HudPanel.Visibility = _settings.ShowHud ? Visibility.Visible : Visibility.Collapsed;
+                DeviceNameBox.Text = _settings.DeviceName ?? "";
+            }
+            finally { _suppressSettingsEvents = false; }
+        }
+
+        /// <summary>截图按钮：把当前帧保存为 PNG 到「图片\AirPlayer」。</summary>
+        private void ScreenshotButton_Click(object sender, RoutedEventArgs e) => TakeScreenshot();
+
+        private void TakeScreenshot()
+        {
+            if (_presenter == null || !_pipelineReady)
+            {
+                ShowToast("请先投屏再截图");
+                return;
+            }
+            try
+            {
+                string dir = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AirPlayer");
+                System.IO.Directory.CreateDirectory(dir);
+                string path = System.IO.Path.Combine(dir, $"screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+                _presenter.RequestScreenshot(path);
+                ShowToast("已保存截图到 图片\\AirPlayer");
+            }
+            catch (Exception ex)
+            {
+                ShowToast("截图失败");
+                DiagLog.Write($"[UI] 截图请求失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>自定义设备名失焦时持久化（重启生效）。</summary>
+        private void DeviceNameBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsEvents) return;
+            var name = DeviceNameBox.Text?.Trim();
+            _settings.DeviceName = string.IsNullOrEmpty(name) ? null : name;
+            _settings.Save();
+        }
+
+        /// <summary>底部瞬时提示（约 1.8 秒后自动消失）。</summary>
+        private void ShowToast(string message)
+        {
+            ToastText.Text = message;
+            ToastPanel.Visibility = Visibility.Visible;
+            if (_toastTimer == null)
+            {
+                _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.8) };
+                _toastTimer.Tick += (s, e) => { _toastTimer?.Stop(); ToastPanel.Visibility = Visibility.Collapsed; };
+            }
+            _toastTimer.Stop();
+            _toastTimer.Start();
+        }
+
+        /// <summary>窗口置顶开关。</summary>
+        private void AlwaysOnTopToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsEvents) return;
+            _settings.AlwaysOnTop = AlwaysOnTopToggle.IsOn;
+            if (_appWindow?.Presenter is OverlappedPresenter op)
+                op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+            _settings.Save();
+        }
+
+        /// <summary>HUD 显示开关（设置浮窗内）。</summary>
+        private void HudToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsEvents) return;
+            SetHudVisible(HudToggle.IsOn);
+        }
+
+        /// <summary>HUD 按钮：切换显示。</summary>
+        private void HudButton_Click(object sender, RoutedEventArgs e)
+            => SetHudVisible(HudPanel.Visibility != Visibility.Visible);
+
+        /// <summary>统一设置 HUD 可见性并持久化。</summary>
+        private void SetHudVisible(bool on)
+        {
+            HudPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            _settings.ShowHud = on;
+            if (HudToggle.IsOn != on)
+            {
+                _suppressSettingsEvents = true;
+                HudToggle.IsOn = on;
+                _suppressSettingsEvents = false;
+            }
+            _settings.Save();
+        }
+
+        /// <summary>HUD 定时刷新：分辨率 / FPS / 解码 / 丢帧。</summary>
+        private void HudTimer_Tick(object? sender, object e)
+        {
+            if (HudPanel.Visibility != Visibility.Visible) return;
+            if (_presenter == null || !_pipelineReady)
+            {
+                HudText.Text = "等待投屏…";
+                _lastPresentedForFps = 0;
+                return;
+            }
+            var s = _presenter.GetStats();
+            int fps = s.Presented - _lastPresentedForFps;
+            if (fps < 0) fps = 0;
+            _lastPresentedForFps = s.Presented;
+            HudText.Text = $"{s.Width}x{s.Height}   {fps} fps\n解码 {s.Decoded}  丢帧 {s.Skipped}";
+        }
+
+        /// <summary>鼠标移动：显示控制条并重置自动隐藏计时（仅投屏时会隐藏）。</summary>
+        private void MainGrid_PointerMoved(object sender, PointerRoutedEventArgs e)
+        {
+            ControlBar.Visibility = Visibility.Visible;
+            _controlHideTimer?.Stop();
+            if (_isMirroringActive) _controlHideTimer?.Start();
+        }
+
+        /// <summary>3 秒无操作：投屏中则隐藏控制条。</summary>
+        private void ControlHideTimer_Tick(object? sender, object e)
+        {
+            _controlHideTimer?.Stop();
+            if (_isMirroringActive) ControlBar.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>获取本机第一个非回环 IPv4 地址。</summary>
+        private static string GetLocalIPv4()
+        {
+            try
+            {
+                foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != OperationalStatus.Up) continue;
+                    if (ni.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                    foreach (var ua in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (ua.Address.AddressFamily == AddressFamily.InterNetwork
+                            && !System.Net.IPAddress.IsLoopback(ua.Address))
+                            return ua.Address.ToString();
+                    }
+                }
+            }
+            catch { }
+            return "";
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -126,6 +311,9 @@ namespace AirPlayer.App
                 _gotKeyframe       = false;
                 _firstFrameLogged  = false;
 
+                // 投屏开始：启动控制条自动隐藏倒计时
+                _controlHideTimer?.Start();
+
                 // 初始化音频播放器
                 if (_audioSink == null)
                 {
@@ -146,6 +334,11 @@ namespace AirPlayer.App
                 // 释放音频播放器
                 _audioSink?.Dispose();
                 _audioSink = null;
+
+                // 投屏结束：恢复控制条常显，重置 HUD 计数
+                _controlHideTimer?.Stop();
+                ControlBar.Visibility = Visibility.Visible;
+                _lastPresentedForFps = 0;
 
                 SwapPanel.Visibility  = Visibility.Collapsed;
                 PromoGrid.Visibility  = Visibility.Visible;
@@ -413,11 +606,33 @@ namespace AirPlayer.App
                 ToggleFullScreen();
                 e.Handled = true;
             }
-            else if (e.Key == Windows.System.VirtualKey.R)
+            else if (e.Key == Windows.System.VirtualKey.R && !IsTextInputFocused())
             {
                 RotateVideo();
                 e.Handled = true;
             }
+            else if (e.Key == Windows.System.VirtualKey.H && !IsTextInputFocused())
+            {
+                SetHudVisible(HudPanel.Visibility != Visibility.Visible);
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.S && !IsTextInputFocused())
+            {
+                TakeScreenshot();
+                e.Handled = true;
+            }
+        }
+
+        /// <summary>当前焦点是否在文本输入控件上（避免单字母快捷键打断输入）。</summary>
+        private bool IsTextInputFocused()
+        {
+            try
+            {
+                if (Content?.XamlRoot == null) return false;
+                var fe = Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Content.XamlRoot);
+                return fe is TextBox;
+            }
+            catch { return false; }
         }
 
         /// <summary>旋转按钮</summary>

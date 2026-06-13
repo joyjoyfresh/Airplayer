@@ -1,0 +1,55 @@
+using System;
+using System.IO;
+using System.Text.Json;
+
+namespace AirPlayer.App
+{
+    /// <summary>
+    /// 应用设置，持久化到 %LocalAppData%\AirPlayer\settings.json。
+    /// 读写失败一律安全降级到默认值，不影响主流程。
+    /// </summary>
+    public sealed class AppSettings
+    {
+        /// <summary>窗口置顶</summary>
+        public bool AlwaysOnTop { get; set; }
+
+        /// <summary>显示实时 HUD（FPS/分辨率等）</summary>
+        public bool ShowHud { get; set; }
+
+        /// <summary>自定义 AirPlay 设备名（为空则用计算机名）</summary>
+        public string? DeviceName { get; set; }
+
+        private static string Dir => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AirPlayer");
+
+        private static string FilePath => Path.Combine(Dir, "settings.json");
+
+        /// <summary>从磁盘加载设置（不存在或出错则返回默认值）。</summary>
+        public static AppSettings Load()
+        {
+            try
+            {
+                if (File.Exists(FilePath))
+                {
+                    var json = File.ReadAllText(FilePath);
+                    var s = JsonSerializer.Deserialize<AppSettings>(json);
+                    if (s != null) return s;
+                }
+            }
+            catch { /* 忽略，使用默认值 */ }
+            return new AppSettings();
+        }
+
+        /// <summary>保存设置到磁盘。</summary>
+        public void Save()
+        {
+            try
+            {
+                Directory.CreateDirectory(Dir);
+                var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(FilePath, json);
+            }
+            catch { /* 忽略 */ }
+        }
+    }
+}
