@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Channels;
 using System.Threading;
@@ -31,12 +32,13 @@ namespace AirPlayer.App.Rendering
 
         private Thread? _renderThread;                          // 渲染线程（MTA）
         private volatile bool _renderRunning;                  // 渲染线程运行标志
-        private readonly Channel<H264Data> _frameChannel = Channel.CreateBounded<H264Data>(
-            new BoundedChannelOptions(MaxQueueDepth)
+        // 无界帧通道：网络线程永不静默丢帧，避免丢掉参考链中间帧导致解码失败/花屏。
+        // 积压的取舍统一交由渲染线程在 GOP（IDR）边界处理，详见 RenderLoop。
+        private readonly Channel<H264Data> _frameChannel = Channel.CreateUnbounded<H264Data>(
+            new UnboundedChannelOptions
             {
                 SingleReader = true,
-                SingleWriter = false,
-                FullMode = BoundedChannelFullMode.DropOldest
+                SingleWriter = false
             });
 
         // ──────────────────────────────────────────────────────────────────
@@ -48,7 +50,9 @@ namespace AirPlayer.App.Rendering
         private int _panelWidth;
         private int _panelHeight;
         private bool _processorReady;
-        private int _consecutiveErrors;
+        // 解码健康门控：为 true 时丢弃帧直到遇到 IDR（关键帧）才恢复解码。
+        // 初值 true：启动后先等待首个 IDR；解码失败后置 true，等下一个 IDR 重新对齐参考链，杜绝花屏。
+        private bool _awaitingKeyframe = true;
 
         /// <summary>分辨率变化事件（在渲染线程触发，带宽高参数）</summary>
         public event EventHandler<(int Width, int Height)>? ResolutionChanged;
@@ -57,10 +61,9 @@ namespace AirPlayer.App.Rendering
         // 常量
         // ──────────────────────────────────────────────────────────────────
 
-        // 帧通道最大积压深度（超出后丢弃最旧帧；16帧 ≈ 533ms 缓冲，充分吸收网络突发）
-        private const int MaxQueueDepth = 16;
-        // 连续失败多少帧后丢弃到下一 IDR 进行错误恢复
-        private const int MaxConsecutiveErrors = 5;
+        // 渲染线程单次最多积压多少帧；超出则跳到最近 IDR 重新起步（GOP 对齐，控延迟又不花屏）。
+        // 90 帧在 60fps 下约 1.5s；正常解码跟得上时几乎不触发，可按需调小以降低延迟。
+        private const int MaxBacklogFrames = 90;
         // 诊断：已成功解码帧数（用于周期性日志）
         private int _decodedFrameCount;
         // 诊断：已跳过帧数（TryDecode 返回 false）
@@ -235,40 +238,70 @@ namespace AirPlayer.App.Rendering
             DiagLog.Write("[PRS] 渲染线程启动");
 
             var reader = _frameChannel.Reader;
+            var batch = new List<H264Data>(64); // 复用列表，避免每轮分配
             while (_renderRunning)
             {
-                if (reader.TryRead(out var frame))
+                if (!reader.TryRead(out var first))
                 {
-                    try
-                    {
-                        // 批量解码：把队列中所有积压帧都送入解码器（维护参考链），
-                        // 但只对最后一帧做 Blt+Present，避免花屏。
-                        H264Data lastFrame = frame;
-                        int decoded = 1;
-                        while (reader.TryRead(out var next))
-                        {
-                            ProcessFrame(lastFrame, present: false); // 解码不呈现
-                            lastFrame = next;
-                            decoded++;
-                        }
-                        if (decoded > 1)
-                            DiagLog.Write($"[PRS] 批量解码 {decoded} 帧，仅呈现最新");
-                        // 帧率节流：最后一帧是否呈现由目标帧率门控决定；
-                        // 未达呈现间隔时仅解码不呈现（维护参考链，主动丢弃多余帧）
-                        ProcessFrame(lastFrame, present: ShouldPresentNow());
-                        // 周期性诊断：每 60 帧输出一次解码成功/跳过统计
-                        _decodedFrameCount++;
-                        if (_decodedFrameCount == 1 || _decodedFrameCount % 60 == 0)
-                            DiagLog.Write($"[PRS] 解码统计: 成功={_decodedFrameCount} 跳过={_skippedFrameCount}");
-                    }
-                    catch (Exception ex)
-                    {
-                        DiagLog.Write($"[PRS] 渲染循环异常: {ex.Message}");
-                    }
+                    Thread.Sleep(1); // 暂无数据，轻量等待
+                    continue;
                 }
-                else
+
+                try
                 {
-                    Thread.Sleep(1);
+                    // ── 一次性排空通道中所有积压帧 ────────────────────────────
+                    batch.Clear();
+                    batch.Add(first);
+                    while (reader.TryRead(out var n)) batch.Add(n);
+
+                    // ── 延迟控制：积压过多时跳到「最近的 IDR」重新起步 ─────────
+                    // 只在 IDR（完整 GOP 起点）处跳，绝不丢半截 GOP，从根上杜绝花屏。
+                    if (batch.Count > MaxBacklogFrames)
+                    {
+                        int lastIdr = batch.FindLastIndex(f => f.FrameType == 5);
+                        if (lastIdr > 0) // 最近 IDR 之前还有陈旧帧才值得跳
+                        {
+                            int original = batch.Count;
+                            _skippedFrameCount += lastIdr;   // 整段陈旧 GOP 计入丢帧
+                            batch.RemoveRange(0, lastIdr);   // 丢弃最近 IDR 之前的陈旧帧
+                            _awaitingKeyframe = false;        // 已对齐到 IDR
+                            DiagLog.Write($"[PRS] 追帧：积压 {original} 帧，跳到最近 IDR，丢弃 {lastIdr} 帧");
+                        }
+                        // 若积压里没有 IDR：无法安全跳过，全部解码（参考链完整，硬件解码很快追上）
+                    }
+
+                    // ── 按序解码整批；仅最后一帧按节流决定是否呈现 ────────────
+                    for (int i = 0; i < batch.Count; i++)
+                    {
+                        H264Data f = batch[i];
+
+                        // 健康门控：解码失败/启动后，丢弃残缺 GOP 帧，直到遇到 IDR 才恢复，杜绝花屏
+                        if (_awaitingKeyframe)
+                        {
+                            if (f.FrameType != 5) { _skippedFrameCount++; continue; }
+                            _awaitingKeyframe = false; // 命中 IDR，参考链可重新建立
+                        }
+
+                        // 仅最后一帧呈现，其余只解码以维护参考链；最后一帧再经帧率节流门控
+                        bool present = (i == batch.Count - 1) && ShouldPresentNow();
+                        if (ProcessFrame(f, present))
+                        {
+                            _decodedFrameCount++;
+                        }
+                        else
+                        {
+                            _skippedFrameCount++;
+                            _awaitingKeyframe = true; // 解码失败：等待下一个 IDR 重新对齐
+                        }
+                    }
+
+                    // 周期性诊断：每 120 帧输出一次解码/跳过统计
+                    if (_decodedFrameCount == 1 || _decodedFrameCount % 120 == 0)
+                        DiagLog.Write($"[PRS] 解码统计: 成功={_decodedFrameCount} 跳过={_skippedFrameCount} 本批={batch.Count}");
+                }
+                catch (Exception ex)
+                {
+                    DiagLog.Write($"[PRS] 渲染循环异常: {ex.Message}");
                 }
             }
 
@@ -293,8 +326,9 @@ namespace AirPlayer.App.Rendering
             return true;
         }
 
-        /// <summary>处理单帧：解码 → 检查 Resize → [可选] Blt → Present</summary>
-        private void ProcessFrame(H264Data frame, bool present = true)
+        /// <summary>处理单帧：解码 → 检查 Resize → [可选] Blt → Present。</summary>
+        /// <returns>true=解码成功（参考链有效）；false=解码失败（调用方应等待下一个 IDR）。</returns>
+        private bool ProcessFrame(H264Data frame, bool present = true)
         {
             // ── 分辨率变化检测（iOS 旋转）───────────────────────────────
             // 仅在 IDR 帧（type=5）时才做分辨率变化检测：
@@ -355,20 +389,17 @@ namespace AirPlayer.App.Rendering
 
             if (!got)
             {
-                _skippedFrameCount++;
-                // 首次跳过及每 60 次跳过输出诊断日志
-                if (_skippedFrameCount == 1 || _skippedFrameCount % 60 == 0)
-                    DiagLog.Write($"[PRS] TryDecode 返回 false (已跳过 {_skippedFrameCount} 帧) frameType={frame.FrameType}");
-                return;
+                // 解码失败（多因参考链中断）：诊断节流输出，交由调用方等待下一个 IDR 重新对齐
+                if (_skippedFrameCount == 0 || _skippedFrameCount % 60 == 0)
+                    DiagLog.Write($"[PRS] TryDecode 返回 false frameType={frame.FrameType}（等待下一个 IDR 重新对齐）");
+                return false;
             }
-
-            _consecutiveErrors = 0;
 
             if (!present)
             {
                 // 仅解码不呈现：维护参考链，释放纹理
                 nv12Tex?.Dispose();
-                return;
+                return true;
             }
 
             // ── GPU Blt → Present ─────────────────────────────────────────
@@ -412,6 +443,8 @@ namespace AirPlayer.App.Rendering
                         Volatile.Read(ref _panelWidth), Volatile.Read(ref _panelHeight));
                 }
             }
+
+            return true; // 解码并呈现成功
         }
 
         /// <summary>
@@ -494,29 +527,6 @@ namespace AirPlayer.App.Rendering
             }
         }
 
-        // ──────────────────────────────────────────────────────────────────
-        // 错误恢复：等待下一个 IDR
-        // ──────────────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// 连续解码失败超阈值后调用；排空通道中非 IDR 帧，等待下一个关键帧恢复。
-        /// </summary>
-        private void DrainToNextKeyframe()
-        {
-            int drained = 0;
-            var reader = _frameChannel.Reader;
-            while (reader.TryRead(out var f))
-            {
-                if (f.FrameType == 5)
-                {
-                    // IDR：重新入队，让它正常解码成为参考帧
-                    _frameChannel.Writer.TryWrite(f);
-                    break;
-                }
-                drained++;
-            }
-            DiagLog.Write($"[PRS] 错误恢复：已丢弃 {drained} 帧，IDR 已保留");
-        }
 
         // ──────────────────────────────────────────────────────────────────
         // 释放
