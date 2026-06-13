@@ -451,12 +451,25 @@ namespace AirPlayer.App
             resolutionContainer.Children.Add(resolutionHeader);
             resolutionContainer.Children.Add(resolutionCombo);
 
+            var fpsCombo = new ComboBox
+            {
+                Header = "帧率限制 (修改后重启生效)",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            fpsCombo.Items.Add("60 fps (推荐)");
+            fpsCombo.Items.Add("30 fps");
+            fpsCombo.SelectedIndex = _settings.PreferredFps == 30 ? 1 : 0;
+
+            var fpsContainer = new StackPanel { Spacing = 6 };
+            fpsContainer.Children.Add(fpsCombo);
+
             stackPanel.Children.Add(nameContainer);       // 1. 设备名称
             stackPanel.Children.Add(resolutionContainer); // 2. 视频分辨率
-            stackPanel.Children.Add(audioContainer);      // 3. 音频设备
-            stackPanel.Children.Add(screenshotContainer); // 4. 截图保存路径
-            stackPanel.Children.Add(hudSectionHeader);    // 5. HUD 区块标题
-            stackPanel.Children.Add(hudContainer);        // 5. HUD 参数控件
+            stackPanel.Children.Add(fpsContainer);        // 3. 视频帧率
+            stackPanel.Children.Add(audioContainer);      // 4. 音频设备
+            stackPanel.Children.Add(screenshotContainer); // 5. 截图保存路径
+            stackPanel.Children.Add(hudSectionHeader);    // 6. HUD 区块标题
+            stackPanel.Children.Add(hudContainer);        // 6. HUD 参数控件
 
             var scrollViewer = new Microsoft.UI.Xaml.Controls.ScrollViewer
             {
@@ -524,6 +537,11 @@ namespace AirPlayer.App
                 _settings.PreferredResolution = resolutionCombo.SelectedIndex == 1 ? 720 : 1080;
                 bool resChanged = _settings.PreferredResolution != oldRes;
 
+                // 6. 保存视频帧率设置
+                var oldFps = _settings.PreferredFps;
+                _settings.PreferredFps = fpsCombo.SelectedIndex == 1 ? 30 : 60;
+                bool fpsChanged = _settings.PreferredFps != oldFps;
+
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
                 _settings.Save();
@@ -549,7 +567,7 @@ namespace AirPlayer.App
                 }
 
                 // 提示反馈
-                if (_settings.DeviceName != oldName || resChanged)
+                if (_settings.DeviceName != oldName || resChanged || fpsChanged)
                 {
                     ShowToast("设置已保存，修改内容重启生效");
                 }
@@ -761,7 +779,8 @@ namespace AirPlayer.App
             _receiver = new AirPlayReceiver(
                 deviceName,
                 preferredWidth: _settings.PreferredResolution == 720 ? 1280 : 1920,
-                preferredHeight: _settings.PreferredResolution == 720 ? 720 : 1080
+                preferredHeight: _settings.PreferredResolution == 720 ? 720 : 1080,
+                preferredFps: _settings.PreferredFps
             );
             _receiver.OnMirroringStartedReceived += Receiver_OnMirroringStarted;
             _receiver.OnMirroringStoppedReceived += Receiver_OnMirroringStopped;

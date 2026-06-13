@@ -52,6 +52,9 @@ namespace AirPlayer.App
         /// <summary>首选视频分辨率：1080 = 1080p，720 = 720p</summary>
         public int PreferredResolution { get; set; } = 1080;
 
+        /// <summary>首选视频播放帧率：30 = 30fps，60 = 60fps</summary>
+        public int PreferredFps { get; set; } = 60;
+
         private static string Dir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AirPlayer");
 

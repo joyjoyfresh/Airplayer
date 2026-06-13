@@ -38,10 +38,11 @@ namespace AirPlayer.Protocol.Listeners
         private readonly DumpConfig _dumpConfig;
         private readonly int _preferredWidth;
         private readonly int _preferredHeight;
+        private readonly int _preferredFps;
 
         public string PublicKeyHex => BitConverter.ToString(_publicKey).Replace("-", string.Empty).ToLowerInvariant();
 
-        public AirTunesListener(IRtspReceiver receiver, ushort port, ushort airPlayPort, DumpConfig dumpConfig, string instance = "airserver", string deviceId = "11:22:33:44:55:66", byte[] seed = null, int preferredWidth = 1920, int preferredHeight = 1080) : base(port)
+        public AirTunesListener(IRtspReceiver receiver, ushort port, ushort airPlayPort, DumpConfig dumpConfig, string instance = "airserver", string deviceId = "11:22:33:44:55:66", byte[] seed = null, int preferredWidth = 1920, int preferredHeight = 1080, int preferredFps = 60) : base(port)
         {
             _airTunesPort = port;
             _airPlayPort = airPlayPort;
@@ -51,6 +52,7 @@ namespace AirPlayer.Protocol.Listeners
             _dumpConfig = dumpConfig ?? throw new ArgumentNullException(nameof(dumpConfig));
             _preferredWidth = preferredWidth;
             _preferredHeight = preferredHeight;
+            _preferredFps = preferredFps;
 
             // 用外部传入的随机种子生成 ED25519 密钥对；未提供时兜底随机生成，避免再用固定种子
             if (seed == null || seed.Length != 32)
@@ -101,7 +103,9 @@ namespace AirPlayer.Protocol.Listeners
                         { "heightPhysical", 0 },
                         { "features", 30 },
                         { "heightPixels", (double)_preferredHeight },
-                        { "overscanned", false }
+                        { "overscanned", false },
+                        { "refreshRate", (double)_preferredFps },
+                        { "maxFrameRate", (double)_preferredFps }
                     }
                 });
                 dict.Add("audioFormats", new List<Dictionary<string, object>>
