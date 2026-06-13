@@ -19,6 +19,30 @@ namespace AirPlayer.App
         /// <summary>自定义 AirPlay 设备名（为空则用计算机名）</summary>
         public string? DeviceName { get; set; }
 
+        /// <summary>HUD 字体大小</summary>
+        public int HudFontSize { get; set; } = 13;
+
+        /// <summary>HUD 文本颜色Hex</summary>
+        public string HudTextColor { get; set; } = "#00E676";
+
+        /// <summary>HUD 背景透明度 (0.0 到 1.0)</summary>
+        public double HudBgOpacity { get; set; } = 0.56;
+
+        /// <summary>窗口位置 X（像素），null 表示首次启动默认居中</summary>
+        public int? WindowX { get; set; }
+
+        /// <summary>窗口位置 Y（像素），null 表示首次启动默认居中</summary>
+        public int? WindowY { get; set; }
+
+        /// <summary>窗口宽度（像素），null 表示使用默认大小</summary>
+        public int? WindowWidth { get; set; }
+
+        /// <summary>窗口高度（像素），null 表示使用默认大小</summary>
+        public int? WindowHeight { get; set; }
+
+        /// <summary>截图保存目录，如果为空或无效则使用默认路径（图片\AirPlayer）</summary>
+        public string? ScreenshotSavePath { get; set; }
+
         private static string Dir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AirPlayer");
 
@@ -33,7 +57,13 @@ namespace AirPlayer.App
                 {
                     var json = File.ReadAllText(FilePath);
                     var s = JsonSerializer.Deserialize<AppSettings>(json);
-                    if (s != null) return s;
+                    if (s != null)
+                    {
+                        if (s.HudFontSize <= 0) s.HudFontSize = 13;
+                        if (string.IsNullOrEmpty(s.HudTextColor)) s.HudTextColor = "#00E676";
+                        if (s.HudBgOpacity < 0 || s.HudBgOpacity > 1) s.HudBgOpacity = 0.56;
+                        return s;
+                    }
                 }
             }
             catch { /* 忽略，使用默认值 */ }

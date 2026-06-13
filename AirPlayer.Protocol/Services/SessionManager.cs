@@ -34,6 +34,11 @@ namespace AirPlayer.Protocol.Services
             return Task.CompletedTask;
         }
 
+        public System.Collections.Generic.IEnumerable<Session> GetActiveSessions()
+        {
+            return _sessions.Values;
+        }
+
         private static string NormalizeKey(string key)
         {
             return string.IsNullOrWhiteSpace(key) ? "default" : key;

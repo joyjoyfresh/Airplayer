@@ -52,6 +52,12 @@ namespace AirPlayer.App
         private int _rotationDegrees; // 0 or 270 (toggle only)
         private H264Data? _pendingFirstFrame;         // 首帧 IDR 暂存，管线就绪后补投
 
+        // ===== 投屏态窗口位置记忆（0° 和 270° 各一套，投屏结束后重置）=====
+        private PointInt32? _castingPos0;              // 0° 时的窗口位置
+        private SizeInt32? _castingSize0;              // 0° 时的窗口大小
+        private PointInt32? _castingPos270;            // 270° 时的窗口位置
+        private SizeInt32? _castingSize270;            // 270° 时的窗口大小
+
         // ===== 音频播放管线 =====
         private AudioSink? _audioSink;                // 音频播放器
 
@@ -72,6 +78,20 @@ namespace AirPlayer.App
             IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             WindowId windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
+
+            // 设置应用窗口的图标
+            try
+            {
+                string iconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "AppIcon.ico");
+                if (System.IO.File.Exists(iconPath))
+                {
+                    _appWindow.SetIcon(iconPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[UI] 设置窗口图标失败: {ex.Message}");
+            }
 
             this.Title = "AirPlayer Receiver";
             this.Closed += MainWindow_Closed;
@@ -94,6 +114,9 @@ namespace AirPlayer.App
             // 应用持久化设置（置顶 / HUD），并同步设置浮窗开关状态
             ApplySettings();
 
+            // 恢复上次窗口位置/大小（首次启动默认居中）
+            RestoreWindowPosition();
+
             // HUD 刷新定时器（始终运行，仅在 HUD 可见时更新文本）
             _hudTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _hudTimer.Tick += HudTimer_Tick;
@@ -115,12 +138,35 @@ namespace AirPlayer.App
         // v0.3：设置 / HUD / 控制条
         // ──────────────────────────────────────────────────────────────────
 
+        /// <summary>解析十六进制颜色值为 Windows.UI.Color</summary>
+        private static Windows.UI.Color GetColorFromHex(string hex)
+        {
+            try
+            {
+                hex = hex.Replace("#", string.Empty);
+                byte r = byte.Parse(hex.Substring(0, 2), System.Globalization.NumberStyles.HexNumber);
+                byte g = byte.Parse(hex.Substring(2, 2), System.Globalization.NumberStyles.HexNumber);
+                byte b = byte.Parse(hex.Substring(4, 2), System.Globalization.NumberStyles.HexNumber);
+                return Windows.UI.Color.FromArgb(255, r, g, b);
+            }
+            catch
+            {
+                return Windows.UI.Color.FromArgb(255, 0, 230, 118); // 默认绿色
+            }
+        }
+
         /// <summary>应用持久化设置到窗口（菜单项的勾选状态在菜单打开时同步）。</summary>
         private void ApplySettings()
         {
             if (_appWindow?.Presenter is OverlappedPresenter op)
                 op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+            
             HudPanel.Visibility = _settings.ShowHud ? Visibility.Visible : Visibility.Collapsed;
+
+            // 应用 HUD 自定义尺寸、颜色和背景透明度参数
+            HudText.FontSize = _settings.HudFontSize;
+            HudText.Foreground = new SolidColorBrush(GetColorFromHex(_settings.HudTextColor));
+            HudPanel.Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = _settings.HudBgOpacity };
         }
 
         /// <summary>截图按钮：把当前帧保存为 PNG 到「图片\AirPlayer」。</summary>
@@ -135,12 +181,39 @@ namespace AirPlayer.App
             }
             try
             {
-                string dir = System.IO.Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AirPlayer");
-                System.IO.Directory.CreateDirectory(dir);
+                string? dir = _settings.ScreenshotSavePath;
+                bool isDefault = false;
+                if (string.IsNullOrWhiteSpace(dir))
+                {
+                    dir = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AirPlayer");
+                    isDefault = true;
+                }
+
+                try
+                {
+                    System.IO.Directory.CreateDirectory(dir);
+                }
+                catch (Exception ex)
+                {
+                    DiagLog.Write($"[UI] 自定义截图路径创建失败，回退到默认路径: {ex.Message}");
+                    dir = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AirPlayer");
+                    System.IO.Directory.CreateDirectory(dir);
+                    isDefault = true;
+                }
+
                 string path = System.IO.Path.Combine(dir, $"screenshot_{DateTime.Now:yyyyMMdd_HHmmss}.png");
                 _presenter.RequestScreenshot(path);
-                ShowToast("已保存截图到 图片\\AirPlayer");
+
+                if (isDefault)
+                {
+                    ShowToast("已保存截图到 图片\\AirPlayer");
+                }
+                else
+                {
+                    ShowToast($"已保存截图到 {dir}");
+                }
             }
             catch (Exception ex)
             {
@@ -149,30 +222,232 @@ namespace AirPlayer.App
             }
         }
 
-        /// <summary>菜单「设备名称…」：弹对话框编辑自定义 AirPlay 名（重启生效）。</summary>
-        private async void DeviceNameMenuItem_Click(object sender, RoutedEventArgs e)
+        /// <summary>菜单「更多设置…」：弹窗进行本机名称、HUD相关参数（大小、颜色、透明度等）等综合设置。</summary>
+        private async void SettingsMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            var box = new TextBox
+            var stackPanel = new StackPanel { Spacing = 16, Width = 300 };
+
+            // 1. 设备名称配置
+            var nameHeader = new TextBlock 
+            { 
+                Text = "设备名称", 
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
+                Margin = new Thickness(0, 0, 0, 4) 
+            };
+            var nameBox = new TextBox
             {
                 Text = _settings.DeviceName ?? "",
-                PlaceholderText = "留空则用计算机名"
+                PlaceholderText = "使用系统默认计算机名",
+                HorizontalAlignment = HorizontalAlignment.Stretch
             };
+            var nameTip = new TextBlock 
+            { 
+                Text = "* 修改设备名称后需要重启应用生效", 
+                FontSize = 11, 
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray), 
+                Margin = new Thickness(0, 2, 0, 0) 
+            };
+            var nameContainer = new StackPanel();
+            nameContainer.Children.Add(nameHeader);
+            nameContainer.Children.Add(nameBox);
+            nameContainer.Children.Add(nameTip);
+
+            // 2. HUD 设置 Section Header
+            var hudHeader = new TextBlock 
+            { 
+                Text = "HUD 实时监控参数设置", 
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
+                Margin = new Thickness(0, 8, 0, 0) 
+            };
+
+            // HUD 字体大小 Slider
+            var hudSizeSlider = new Slider
+            {
+                Header = "HUD 字体大小",
+                Minimum = 10,
+                Maximum = 24,
+                Value = _settings.HudFontSize,
+                StepFrequency = 1,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
+            // HUD 文本颜色 ComboBox
+            var colors = new[]
+            {
+                (Name: "绿色", Hex: "#00E676"),
+                (Name: "青色", Hex: "#00B0FF"),
+                (Name: "白色", Hex: "#FFFFFF"),
+                (Name: "黄色", Hex: "#FFD600"),
+                (Name: "橙色", Hex: "#FF3D00"),
+                (Name: "粉色", Hex: "#FF4081")
+            };
+            var colorCombo = new ComboBox
+            {
+                Header = "HUD 文本颜色",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            foreach (var c in colors)
+            {
+                colorCombo.Items.Add(c.Name);
+            }
+            int selectedIndex = 0;
+            for (int i = 0; i < colors.Length; i++)
+            {
+                if (colors[i].Hex.Equals(_settings.HudTextColor, StringComparison.OrdinalIgnoreCase))
+                {
+                    selectedIndex = i;
+                    break;
+                }
+            }
+            colorCombo.SelectedIndex = selectedIndex;
+
+            // HUD 背景透明度 Slider
+            var hudOpacitySlider = new Slider
+            {
+                Header = "HUD 背景不透明度 (%)",
+                Minimum = 0,
+                Maximum = 100,
+                Value = _settings.HudBgOpacity * 100,
+                StepFrequency = 5,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
+            var hudContainer = new StackPanel { Spacing = 10 };
+            hudContainer.Children.Add(hudHeader);
+            hudContainer.Children.Add(hudSizeSlider);
+            hudContainer.Children.Add(colorCombo);
+            hudContainer.Children.Add(hudOpacitySlider);
+
+            // 3. 截图保存路径配置
+            var screenshotHeader = new TextBlock 
+            { 
+                Text = "截图设置", 
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
+                Margin = new Thickness(0, 8, 0, 0) 
+            };
+
+            var pathLabel = new TextBlock
+            {
+                Text = "截图保存目录",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+
+            var defaultPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "AirPlayer");
+
+            var pathGrid = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+            pathGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            pathGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var pathBox = new TextBox
+            {
+                Text = _settings.ScreenshotSavePath ?? defaultPath,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                PlaceholderText = defaultPath
+            };
+
+            var browseBtn = new Button
+            {
+                Content = "浏览...",
+                Margin = new Thickness(8, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Bottom
+            };
+
+            Grid.SetColumn(pathBox, 0);
+            Grid.SetColumn(browseBtn, 1);
+            pathGrid.Children.Add(pathBox);
+            pathGrid.Children.Add(browseBtn);
+
+            browseBtn.Click += async (s, args) =>
+            {
+                try
+                {
+                    var folderPicker = new Windows.Storage.Pickers.FolderPicker();
+                    IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                    WinRT.Interop.InitializeWithWindow.Initialize(folderPicker, hWnd);
+                    folderPicker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary;
+                    folderPicker.FileTypeFilter.Add("*");
+
+                    var folder = await folderPicker.PickSingleFolderAsync();
+                    if (folder != null)
+                    {
+                        pathBox.Text = folder.Path;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    DiagLog.Write($"[UI] 启动文件夹选择器失败: {ex.Message}");
+                    ShowToast("打开文件夹选择失败");
+                }
+            };
+
+            var screenshotContainer = new StackPanel { Spacing = 6 };
+            screenshotContainer.Children.Add(screenshotHeader);
+            screenshotContainer.Children.Add(pathLabel);
+            screenshotContainer.Children.Add(pathGrid);
+
+            stackPanel.Children.Add(nameContainer);
+            stackPanel.Children.Add(hudContainer);
+            stackPanel.Children.Add(screenshotContainer);
+
             var dlg = new ContentDialog
             {
-                Title = "设备名称（重启生效）",
-                Content = box,
+                Title = "更多设置",
+                Content = stackPanel,
                 PrimaryButtonText = "保存",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = Content.XamlRoot
             };
+
             var result = await dlg.ShowAsync();
             if (result == ContentDialogResult.Primary)
             {
-                var name = box.Text?.Trim();
+                // 1. 保存并更新设备名称
+                var name = nameBox.Text?.Trim();
+                var oldName = _settings.DeviceName;
                 _settings.DeviceName = string.IsNullOrEmpty(name) ? null : name;
+
+                // 2. 更新 HUD 参数型设置
+                _settings.HudFontSize = (int)hudSizeSlider.Value;
+                _settings.HudTextColor = colors[colorCombo.SelectedIndex].Hex;
+                _settings.HudBgOpacity = hudOpacitySlider.Value / 100.0;
+
+                // 3. 保存截图路径
+                var pathInput = pathBox.Text?.Trim();
+                if (string.IsNullOrEmpty(pathInput) || pathInput.Equals(defaultPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    _settings.ScreenshotSavePath = null;
+                }
+                else
+                {
+                    try
+                    {
+                        var fullPath = System.IO.Path.GetFullPath(pathInput);
+                        _settings.ScreenshotSavePath = fullPath;
+                    }
+                    catch (Exception ex)
+                    {
+                        ShowToast("截图路径格式不合法，未保存该项");
+                        DiagLog.Write($"[UI] 用户输入的截图保存路径不合法: {pathInput}, {ex.Message}");
+                    }
+                }
+
+                // 应用所有 HUD 设置并保存
+                ApplySettings();
                 _settings.Save();
-                ShowToast("设备名已保存，重启生效");
+
+                // 提示反馈
+                if (_settings.DeviceName != oldName)
+                {
+                    ShowToast("设置已保存，设备名重启生效");
+                }
+                else
+                {
+                    ShowToast("设置已保存");
+                }
             }
         }
 
@@ -196,6 +471,19 @@ namespace AirPlayer.App
             HudMenuItem.IsChecked = HudPanel.Visibility == Visibility.Visible;
             AlwaysOnTopMenuItem.IsChecked =
                 (_appWindow?.Presenter as OverlappedPresenter)?.IsAlwaysOnTop ?? _settings.AlwaysOnTop;
+
+            var visibility = _isMirroringActive ? Visibility.Visible : Visibility.Collapsed;
+            ScreenshotMenuItem.Visibility = visibility;
+            RotateMenuItem.Visibility = visibility;
+            FullScreenMenuItem.Visibility = visibility;
+            ExitMirroringMenuItem.Visibility = visibility;
+            ActiveCastingSeparator.Visibility = visibility;
+        }
+
+        /// <summary>菜单「退出投屏」按钮点击事件。</summary>
+        private void ExitMirroringMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _receiver?.StopActiveMirroring();
         }
 
         /// <summary>菜单打开/关闭：维护标志，避免菜单开着时控制按钮被自动隐藏。</summary>
@@ -209,14 +497,29 @@ namespace AirPlayer.App
             if (_isMirroringActive) _controlHideTimer?.Start();
         }
 
-        /// <summary>菜单「窗口置顶」开关。</summary>
-        private void AlwaysOnTopMenuItem_Click(object sender, RoutedEventArgs e)
+        /// <summary>切换窗口置顶状态并同步 UI 和配置。</summary>
+        private void ToggleAlwaysOnTop()
         {
-            bool on = AlwaysOnTopMenuItem.IsChecked;
+            bool on = !((_appWindow?.Presenter as OverlappedPresenter)?.IsAlwaysOnTop ?? _settings.AlwaysOnTop);
+            SetAlwaysOnTop(on);
+            ShowToast(on ? "窗口已置顶" : "窗口已取消置顶");
+        }
+
+        private void SetAlwaysOnTop(bool on)
+        {
             _settings.AlwaysOnTop = on;
             if (_appWindow?.Presenter is OverlappedPresenter op)
                 op.IsAlwaysOnTop = on;
             _settings.Save();
+            AlwaysOnTopMenuItem.IsChecked = on;
+        }
+
+        /// <summary>菜单「窗口置顶」开关。</summary>
+        private void AlwaysOnTopMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            bool on = AlwaysOnTopMenuItem.IsChecked;
+            SetAlwaysOnTop(on);
+            ShowToast(on ? "窗口已置顶" : "窗口已取消置顶");
         }
 
         /// <summary>菜单「显示 HUD」开关。</summary>
@@ -267,6 +570,53 @@ namespace AirPlayer.App
         /// <summary>获取本机第一个非回环 IPv4 地址。</summary>
         private static string GetLocalIPv4()
         {
+            try
+            {
+                // 用 UDP 连接一个外部地址，借此让操作系统根据路由表选择出口 IP（无需真正发送数据）
+                using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, 0))
+                {
+                    socket.Connect("8.8.8.8", 65530);
+                    if (socket.LocalEndPoint is System.Net.IPEndPoint endPoint)
+                    {
+                        return endPoint.Address.ToString();
+                    }
+                }
+            }
+            catch
+            {
+                // 如果没有公网路由或断网状态，回退到遍历网卡寻找有网关的物理网卡 IP
+                try
+                {
+                    foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
+                    {
+                        if (ni.OperationalStatus != OperationalStatus.Up) continue;
+                        if (ni.NetworkInterfaceType != NetworkInterfaceType.Ethernet && 
+                            ni.NetworkInterfaceType != NetworkInterfaceType.Wireless80211) continue;
+
+                        // 排除常见虚拟网卡关键字
+                        string desc = ni.Description.ToLower();
+                        if (desc.Contains("virtual") || desc.Contains("wsl") || desc.Contains("hyper-v") ||
+                            desc.Contains("vmware") || desc.Contains("virtualbox") || desc.Contains("vbox") ||
+                            desc.Contains("vpn") || desc.Contains("tap") || desc.Contains("loopback"))
+                            continue;
+
+                        var props = ni.GetIPProperties();
+                        if (props.GatewayAddresses.Count == 0) continue; // 必须有网关
+
+                        foreach (var ua in props.UnicastAddresses)
+                        {
+                            if (ua.Address.AddressFamily == AddressFamily.InterNetwork && 
+                                !System.Net.IPAddress.IsLoopback(ua.Address))
+                            {
+                                return ua.Address.ToString();
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // 最后的兜底：普通遍历第一个非回环 IPv4
             try
             {
                 foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
@@ -340,7 +690,7 @@ namespace AirPlayer.App
             });
         }
 
-        /// <summary>镜像结束：停止管线，恢复引导页</summary>
+        /// <summary>镜像结束：停止管线，恢复引导页，恢复待机态窗口</summary>
         private void Receiver_OnMirroringStopped(object? sender, EventArgs e)
         {
             DispatcherQueue.TryEnqueue(() =>
@@ -359,6 +709,9 @@ namespace AirPlayer.App
 
                 SwapPanel.Visibility  = Visibility.Collapsed;
                 PromoGrid.Visibility  = Visibility.Visible;
+
+                // 恢复投屏前保存的待机态窗口位置和大小
+                RestoreWindowPosition();
             });
         }
 
@@ -429,6 +782,17 @@ namespace AirPlayer.App
         {
             if (!_isMirroringActive) return;
 
+            // 投屏开始前，保存当前待机态窗口位置/大小，以便投屏结束后恢复
+            // 注意：此时 _isMirroringActive 已为 true，不能用 SaveWindowPosition()（会被跳过）
+            if (_appWindow != null && !_isFullScreen)
+            {
+                _settings.WindowX = _appWindow.Position.X;
+                _settings.WindowY = _appWindow.Position.Y;
+                _settings.WindowWidth = _appWindow.Size.Width;
+                _settings.WindowHeight = _appWindow.Size.Height;
+                _settings.Save();
+            }
+
             _videoWidth = videoWidth;
             _videoHeight = videoHeight;
             _videoAspectRatio = (double)videoWidth / videoHeight;
@@ -442,8 +806,9 @@ namespace AirPlayer.App
                 SwapPanel.Visibility  = Visibility.Visible;
                 PromoGrid.Visibility  = Visibility.Collapsed;
 
-                // 调整窗口大小并注册比例锁定
+                // 调整窗口大小以适配视频，然后居中
                 _appWindow?.Resize(new SizeInt32(winW, winH));
+                CenterWindowOnScreen();
                 _appWindow!.Changed += AppWindow_Changed;
 
                 DiagLog.Write($"[UI] 窗口调整 {winW}x{winH} (视频 {videoWidth}x{videoHeight})");
@@ -546,6 +911,12 @@ namespace AirPlayer.App
             SwapPanel.RenderTransform = null;
             _rotationDegrees = 0;
 
+            // 清除投屏态窗口位置记忆
+            _castingPos0 = null;
+            _castingSize0 = null;
+            _castingPos270 = null;
+            _castingSize270 = null;
+
             _presenter?.Dispose();
             _presenter = null;
 
@@ -603,6 +974,88 @@ namespace AirPlayer.App
             return 1.0; // 回落到 1x（96 DPI）
         }
 
+        /// <summary>
+        /// 恢复上次保存的窗口位置和大小。
+        /// 首次启动（设置为 null）时将窗口居中到主屏幕。
+        /// 恢复时会校验位置是否在可见屏幕范围内，防止窗口在不可见区域。
+        /// </summary>
+        private void RestoreWindowPosition()
+        {
+            if (_appWindow == null) return;
+
+            var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
+            if (displayArea == null) return;
+
+            var workArea = displayArea.WorkArea;
+
+            if (_settings.WindowWidth.HasValue && _settings.WindowHeight.HasValue
+                && _settings.WindowWidth.Value >= 320 && _settings.WindowHeight.Value >= 240)
+            {
+                // 恢复保存的窗口大小
+                _appWindow.Resize(new SizeInt32(_settings.WindowWidth.Value, _settings.WindowHeight.Value));
+            }
+
+            if (_settings.WindowX.HasValue && _settings.WindowY.HasValue)
+            {
+                int x = _settings.WindowX.Value;
+                int y = _settings.WindowY.Value;
+                int w = _appWindow.Size.Width;
+                int h = _appWindow.Size.Height;
+
+                // 校验窗口是否在任意可见屏幕范围内（至少 100px 可见）
+                bool visible = (x + w > workArea.X + 100) && (x < workArea.X + workArea.Width - 100)
+                            && (y > workArea.Y - 10) && (y < workArea.Y + workArea.Height - 100);
+
+                if (visible)
+                {
+                    _appWindow.Move(new PointInt32(x, y));
+                }
+                else
+                {
+                    // 保存的位置不可见（如副屏已断开），回退到居中
+                    CenterWindow(workArea);
+                }
+            }
+            else
+            {
+                // 首次启动：居中显示
+                CenterWindow(workArea);
+            }
+        }
+
+        /// <summary>将窗口居中到指定工作区域。</summary>
+        private void CenterWindow(RectInt32 workArea)
+        {
+            if (_appWindow == null) return;
+            int x = workArea.X + (workArea.Width - _appWindow.Size.Width) / 2;
+            int y = workArea.Y + (workArea.Height - _appWindow.Size.Height) / 2;
+            _appWindow.Move(new PointInt32(x, y));
+        }
+
+        /// <summary>将窗口居中到当前所在屏幕。</summary>
+        private void CenterWindowOnScreen()
+        {
+            if (_appWindow == null) return;
+            var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
+            if (displayArea == null) return;
+            CenterWindow(displayArea.WorkArea);
+        }
+
+        /// <summary>
+        /// 保存当前窗口位置和大小到持久化设置（待机态窗口）。
+        /// 仅在非全屏、非投屏时保存，投屏态窗口大小不应覆盖用户的待机窗口。
+        /// </summary>
+        private void SaveWindowPosition()
+        {
+            if (_appWindow == null || _isFullScreen || _isMirroringActive) return;
+
+            _settings.WindowX = _appWindow.Position.X;
+            _settings.WindowY = _appWindow.Position.Y;
+            _settings.WindowWidth = _appWindow.Size.Width;
+            _settings.WindowHeight = _appWindow.Size.Height;
+            _settings.Save();
+        }
+
         // ──────────────────────────────────────────────────────────────────
         // 全屏
         // ──────────────────────────────────────────────────────────────────
@@ -610,7 +1063,7 @@ namespace AirPlayer.App
         /// <summary>全屏切换按钮</summary>
         private void FullScreenButton_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
 
-        /// <summary>键盘快捷键：F11 切换全屏，Escape 退出全屏，R 旋转画面</summary>
+        /// <summary>键盘快捷键：F11 切换全屏，Escape 退出全屏，R 旋转画面，H 切换 HUD，S 截图，T 窗口置顶，Q 退出投屏</summary>
         private void MainWindow_KeyDown(object sender, KeyRoutedEventArgs e)
         {
             if (e.Key == Windows.System.VirtualKey.F11)
@@ -631,6 +1084,16 @@ namespace AirPlayer.App
             else if (e.Key == Windows.System.VirtualKey.H && !IsTextInputFocused())
             {
                 SetHudVisible(HudPanel.Visibility != Visibility.Visible);
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.T && !IsTextInputFocused())
+            {
+                ToggleAlwaysOnTop();
+                e.Handled = true;
+            }
+            else if (e.Key == Windows.System.VirtualKey.Q && _isMirroringActive && !IsTextInputFocused())
+            {
+                _receiver?.StopActiveMirroring();
                 e.Handled = true;
             }
             else if (e.Key == Windows.System.VirtualKey.S && !IsTextInputFocused())
@@ -663,9 +1126,29 @@ namespace AirPlayer.App
         {
             if (!_pipelineReady || _videoAspectRatio <= 0) return;
 
+            // 切换前保存当前旋转状态的窗口位置/大小
+            SaveCastingWindowState();
+
             _rotationDegrees = (_rotationDegrees == 0) ? 270 : 0;
             ApplyRotation();
             DiagLog.Write($"[UI] 画面旋转 → {_rotationDegrees}°");
+        }
+
+        /// <summary>保存当前旋转状态下的投屏态窗口位置和大小。</summary>
+        private void SaveCastingWindowState()
+        {
+            if (_appWindow == null || _isFullScreen) return;
+
+            if (_rotationDegrees == 0)
+            {
+                _castingPos0 = _appWindow.Position;
+                _castingSize0 = _appWindow.Size;
+            }
+            else
+            {
+                _castingPos270 = _appWindow.Position;
+                _castingSize270 = _appWindow.Size;
+            }
         }
 
         /// <summary>
@@ -686,16 +1169,26 @@ namespace AirPlayer.App
 
                 if (_isFullScreen)
                 {
-                    // 全屏下不能改窗口大小（会破坏全屏布局，导致画面缩到左上角、UI 消失）。
-                    // 直接按当前可视区域交换宽高，让旋转后的画面填满全屏。
+                    // 全屏下不能改窗口大小，直接按可视区域交换面板宽高
                     SwapPanel.Width = MainGrid.ActualHeight;
                     SwapPanel.Height = MainGrid.ActualWidth;
                 }
                 else
                 {
-                    // 窗口模式：按旋转后比例调整窗口；面板尺寸由 MainGrid_SizeChanged 跟随设置
-                    CalculateWindowSizeForVideo(_videoHeight, _videoWidth, out int winW, out int winH);
-                    _appWindow.Resize(new SizeInt32(winW, winH));
+                    // 窗口模式：有记忆则恢复，否则计算默认值并居中
+                    if (_castingSize270.HasValue)
+                    {
+                        _appWindow.Resize(_castingSize270.Value);
+                        if (_castingPos270.HasValue)
+                            _appWindow.Move(_castingPos270.Value);
+                    }
+                    else
+                    {
+                        CalculateWindowSizeForVideo(_videoHeight, _videoWidth, out int winW, out int winH);
+                        _appWindow.Resize(new SizeInt32(winW, winH));
+                        CenterWindowOnScreen();
+                    }
+                    // 面板尺寸由 MainGrid_SizeChanged 跟随设置
                 }
             }
             else
@@ -707,11 +1200,21 @@ namespace AirPlayer.App
                 SwapPanel.Height = double.NaN;
                 SwapPanel.RenderTransform = null;
 
-                // 全屏下不改窗口大小，避免破坏全屏
+                // 窗口模式下：有记忆则恢复，否则计算默认值并居中
                 if (!_isFullScreen)
                 {
-                    CalculateWindowSizeForVideo(_videoWidth, _videoHeight, out int winW, out int winH);
-                    _appWindow.Resize(new SizeInt32(winW, winH));
+                    if (_castingSize0.HasValue)
+                    {
+                        _appWindow.Resize(_castingSize0.Value);
+                        if (_castingPos0.HasValue)
+                            _appWindow.Move(_castingPos0.Value);
+                    }
+                    else
+                    {
+                        CalculateWindowSizeForVideo(_videoWidth, _videoHeight, out int winW, out int winH);
+                        _appWindow.Resize(new SizeInt32(winW, winH));
+                        CenterWindowOnScreen();
+                    }
                 }
             }
         }
@@ -726,20 +1229,11 @@ namespace AirPlayer.App
                 _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
                 _isFullScreen = false;
 
-                // 退出全屏后恢复窗口尺寸（考虑旋转）
-                if (_pipelineReady && _videoAspectRatio > 0)
-                {
-                    if (_rotationDegrees == 270)
-                    {
-                        CalculateWindowSizeForVideo(_videoHeight, _videoWidth, out int rw, out int rh);
-                        _appWindow.Resize(new SizeInt32(rw, rh));
-                    }
-                    else
-                    {
-                        CalculateWindowSizeForVideo(_videoWidth, _videoHeight, out int rw, out int rh);
-                        _appWindow.Resize(new SizeInt32(rw, rh));
-                    }
-                }
+                // 退出全屏后：窗口会自动恢复到进入全屏前的尺寸和位置（系统行为），
+                // 不再强制 Resize，保留用户调整的窗口大小。
+                // 恢复置顶设置（全屏切换可能重置 Presenter 属性）
+                if (_appWindow.Presenter is OverlappedPresenter op)
+                    op.IsAlwaysOnTop = _settings.AlwaysOnTop;
             }
             else
             {
@@ -759,9 +1253,12 @@ namespace AirPlayer.App
         // 窗口关闭
         // ──────────────────────────────────────────────────────────────────
 
-        /// <summary>窗口关闭：清理所有后台资源</summary>
+        /// <summary>窗口关闭：保存窗口位置并清理所有后台资源</summary>
         private void MainWindow_Closed(object sender, WindowEventArgs args)
         {
+            // 非全屏时保存窗口位置和大小
+            SaveWindowPosition();
+
             _cts?.Cancel();        // 停止 AirPlay 监听
             _receiver?.Dispose();  // 释放接收器
             StopVideoPipeline();   // 释放视频管线

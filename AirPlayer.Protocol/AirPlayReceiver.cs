@@ -183,6 +183,37 @@ namespace AirPlayer.Protocol
             OnMirroringStoppedReceived?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>主动停止当前的镜像投影会话</summary>
+        public void StopActiveMirroring()
+        {
+            // 关闭所有正在连接的 RTSP 控制会话，迫使 Apple 发送端立即感知连接断开并退出投屏状态
+            _airTunesListener?.CloseActiveConnections();
+
+            foreach (var session in Services.SessionManager.Current.GetActiveSessions())
+            {
+                if (session.MirroringListener != null)
+                {
+                    try { session.MirroringListener.StopAsync().Wait(); } catch { }
+                    session.MirroringListener = null;
+                }
+                if (session.StreamingListener != null)
+                {
+                    try { session.StreamingListener.StopAsync().Wait(); } catch { }
+                    session.StreamingListener = null;
+                }
+                if (session.AudioControlListener != null)
+                {
+                    try { session.AudioControlListener.StopAsync().Wait(); } catch { }
+                    session.AudioControlListener = null;
+                }
+                session.SpsPps = null;
+                session.StreamConnectionId = null;
+                session.MirroringSession = null;
+                session.AudioFormat = Models.Enums.AudioFormat.Unknown;
+            }
+            OnMirroringStopped();
+        }
+
         public void Dispose()
         {
             _mdns?.Stop();

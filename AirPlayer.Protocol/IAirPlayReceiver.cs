@@ -28,5 +28,7 @@ namespace AirPlayer.Protocol
         Task StartListeners(CancellationToken cancellationToken);
         /// <summary>启动 mDNS 广播服务发现</summary>
         Task StartMdnsAsync();
+        /// <summary>主动停止当前的镜像投影会话</summary>
+        void StopActiveMirroring();
     }
 }

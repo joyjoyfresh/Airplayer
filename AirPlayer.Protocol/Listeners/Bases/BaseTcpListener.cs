@@ -22,6 +22,7 @@ namespace AirPlayer.Protocol.Listeners
         private readonly ushort _port;
         private TcpListener _listener;
         private readonly ConcurrentDictionary<string, Task> _connections;
+        private readonly ConcurrentDictionary<string, TcpClient> _activeClients;
         private readonly bool _rawData;
         private readonly CancellationTokenSource _cancellationTokenSource;
 
@@ -33,6 +34,7 @@ namespace AirPlayer.Protocol.Listeners
             _rawData = rawData;
             _listener = TcpListener.Create(_port);
             _connections = new ConcurrentDictionary<string, Task>();
+            _activeClients = new ConcurrentDictionary<string, TcpClient>();
             _cancellationTokenSource = new CancellationTokenSource();
         }
 
@@ -73,6 +75,19 @@ namespace AirPlayer.Protocol.Listeners
             return Task.CompletedTask;
         }
 
+        public void CloseActiveConnections()
+        {
+            foreach (var kvp in _activeClients)
+            {
+                try
+                {
+                    kvp.Value.Close();
+                }
+                catch { }
+            }
+            _activeClients.Clear();
+        }
+
         private async Task AcceptClientsAsync(CancellationToken cancellationToken)
         {
             try
@@ -82,7 +97,11 @@ namespace AirPlayer.Protocol.Listeners
                     var client = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
                     var task = HandleClientAsync(client, cancellationToken);
                     var remoteEndpoint = client.Client.RemoteEndPoint.ToString();
-                    if (!_connections.TryAdd(remoteEndpoint, task))
+                    if (_connections.TryAdd(remoteEndpoint, task))
+                    {
+                        _activeClients.TryAdd(remoteEndpoint, client);
+                    }
+                    else
                     {
                         client.Close();
                     }
@@ -95,9 +114,10 @@ namespace AirPlayer.Protocol.Listeners
 
         private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
         {
+            string remoteEndpoint = string.Empty;
             try
             {
-                var remoteEndpoint = client.Client.RemoteEndPoint.ToString();
+                remoteEndpoint = client.Client.RemoteEndPoint.ToString();
                 var stream = client.GetStream();
 
                 if (_rawData)
@@ -108,16 +128,26 @@ namespace AirPlayer.Protocol.Listeners
                 {
                     await ReadFormattedAsync(client, stream, cancellationToken).ConfigureAwait(false);
                 }
-
-                if (client.Connected)
-                {
-                    client.Close();
-                }
-                _connections.Remove(remoteEndpoint, out _);
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[BaseTcpListener] Client error: {ex.Message}");
+            }
+            finally
+            {
+                try
+                {
+                    if (client.Connected)
+                    {
+                        client.Close();
+                    }
+                }
+                catch { }
+                if (!string.IsNullOrEmpty(remoteEndpoint))
+                {
+                    _connections.TryRemove(remoteEndpoint, out _);
+                    _activeClients.TryRemove(remoteEndpoint, out _);
+                }
             }
         }
 
