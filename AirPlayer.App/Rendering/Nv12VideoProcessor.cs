@@ -26,6 +26,9 @@ namespace AirPlayer.App.Rendering
         private int _dstWidth;
         private int _dstHeight;
 
+        /// <summary>铺满模式：true = 裁切源填满目标；false = 保持比例信箱/柱箱（默认）</summary>
+        public volatile bool FillMode;
+
         private ID3D11RenderTargetView? _cachedRtv;
         private ID3D11VideoProcessorOutputView? _cachedOutputView;
         private IntPtr _cachedBackBufferPtr;
@@ -127,8 +130,18 @@ namespace AirPlayer.App.Rendering
 
             ClearBackBuffer(backBuffer);
 
-            RawRect destRect = CalcLetterboxRect(_srcWidth, _srcHeight, _dstWidth, _dstHeight);
-            _videoContext!.VideoProcessorSetStreamDestRect(_processor, 0, true, destRect);
+            if (FillMode)
+            {
+                var (srcRect, destRect) = CalcFillRects(_srcWidth, _srcHeight, _dstWidth, _dstHeight);
+                _videoContext!.VideoProcessorSetStreamSourceRect(_processor, 0, true, srcRect);
+                _videoContext!.VideoProcessorSetStreamDestRect(_processor, 0, true, destRect);
+            }
+            else
+            {
+                _videoContext!.VideoProcessorSetStreamSourceRect(_processor, 0, false, default);
+                RawRect destRect = CalcLetterboxRect(_srcWidth, _srcHeight, _dstWidth, _dstHeight);
+                _videoContext!.VideoProcessorSetStreamDestRect(_processor, 0, true, destRect);
+            }
 
             var stream = new VideoProcessorStream
             {
@@ -150,6 +163,7 @@ namespace AirPlayer.App.Rendering
             _gpu.DeviceContext.ClearRenderTargetView(_cachedRtv, new Color4(0f, 0f, 0f, 1f));
         }
 
+        /// <summary>信箱/柱箱：保持宽高比，不足部分留黑边。</summary>
         private static RawRect CalcLetterboxRect(int srcW, int srcH, int dstW, int dstH)
         {
             if (srcW <= 0 || srcH <= 0)
@@ -175,6 +189,36 @@ namespace AirPlayer.App.Rendering
             }
 
             return new RawRect(x, y, x + w, y + h);
+        }
+
+        /// <summary>
+        /// 铺满裁切：裁切源中心部分以匹配目标宽高比，输出目标为整个缓冲区。
+        /// </summary>
+        private static (RawRect src, RawRect dst) CalcFillRects(int srcW, int srcH, int dstW, int dstH)
+        {
+            if (srcW <= 0 || srcH <= 0)
+                return (new RawRect(0, 0, srcW, srcH), new RawRect(0, 0, dstW, dstH));
+
+            float srcAspect = (float)srcW / srcH;
+            float dstAspect = (float)dstW / dstH;
+
+            RawRect srcRect;
+            if (srcAspect > dstAspect)
+            {
+                // 源比目标更宽 → 裁切源的左右
+                int cropW = (int)(srcH * dstAspect);
+                int cropX = (srcW - cropW) / 2;
+                srcRect = new RawRect(cropX, 0, cropX + cropW, srcH);
+            }
+            else
+            {
+                // 源比目标更高 → 裁切源的上下
+                int cropH = (int)(srcW / dstAspect);
+                int cropY = (srcH - cropH) / 2;
+                srcRect = new RawRect(0, cropY, srcW, cropY + cropH);
+            }
+
+            return (srcRect, new RawRect(0, 0, dstW, dstH));
         }
 
         /// <summary>

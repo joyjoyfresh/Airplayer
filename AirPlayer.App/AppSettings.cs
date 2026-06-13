@@ -46,6 +46,9 @@ namespace AirPlayer.App
         /// <summary>首选音频输出设备名称（为 null 表示使用默认系统播放设备）</summary>
         public string? PreferredAudioDevice { get; set; }
 
+        /// <summary>视频缩放模式：true = 铺满屏幕（裁切），false = 显示完整（信箱/柱箱，默认）</summary>
+        public bool FillScreen { get; set; } = false;
+
         private static string Dir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AirPlayer");
 

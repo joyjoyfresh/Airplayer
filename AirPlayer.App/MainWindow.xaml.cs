@@ -559,6 +559,8 @@ namespace AirPlayer.App
             ScreenshotMenuItem.Visibility = visibility;
 
             RotateMenuItem.Visibility = visibility;
+            FillScreenMenuItem.Visibility = visibility;
+            FillScreenMenuItem.IsChecked = _settings.FillScreen;
             FullScreenMenuItem.Visibility = visibility;
             ExitMirroringMenuItem.Visibility = visibility;
             ActiveCastingSeparator.Visibility = visibility;
@@ -932,6 +934,10 @@ namespace AirPlayer.App
             _pipelineStarting = false;
             DiagLog.Write("[UI] 全 GPU 管线就绪");
 
+            // 应用持久化的缩放模式设置
+            if (_settings.FillScreen)
+                _presenter?.SetFillMode(true);
+
             // 补投暂存的首帧 IDR，避免首个关键帧丢失导致黑屏
             if (_pendingFirstFrame.HasValue)
             {
@@ -1207,6 +1213,15 @@ namespace AirPlayer.App
 
         /// <summary>旋转按钮</summary>
         private void RotateButton_Click(object sender, RoutedEventArgs e) => RotateVideo();
+
+        /// <summary>铺满屏幕菜单项：切换铺满/信箱缩放模式并持久化。</summary>
+        private void FillScreenMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            _settings.FillScreen = !_settings.FillScreen;
+            _settings.Save();
+            _presenter?.SetFillMode(_settings.FillScreen);
+            ShowToast(_settings.FillScreen ? "铺满屏幕" : "显示完整");
+        }
 
         /// <summary>
         /// 旋转画面：在 0° 和 270°（逆时针 90°）之间切换。

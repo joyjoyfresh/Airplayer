@@ -144,6 +144,9 @@
                     <MenuFlyoutItem x:Name="RotateMenuItem" Text="旋转画面 (R)" Click="RotateButton_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE777;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
+                    <ToggleMenuFlyoutItem x:Name="FillScreenMenuItem" Text="铺满屏幕" Click="FillScreenMenuItem_Click">
+                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE740;"/></ToggleMenuFlyoutItem.Icon>
+                    </ToggleMenuFlyoutItem>
                     <MenuFlyoutItem x:Name="FullScreenMenuItem" Text="切换全屏 (F11)" Click="FullScreenButton_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE740;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>

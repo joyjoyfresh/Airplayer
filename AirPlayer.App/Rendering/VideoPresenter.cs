@@ -190,6 +190,16 @@ namespace AirPlayer.App.Rendering
         }
 
         /// <summary>
+        /// 切换铺满/信箱缩放模式。可在任意线程调用，渲染线程在下一帧生效。
+        /// </summary>
+        public void SetFillMode(bool fill)
+        {
+            if (_processor != null)
+                _processor.FillMode = fill;
+            DiagLog.Write($"[PRS] 缩放模式 → {(fill ? "铺满" : "信箱")}");
+        }
+
+        /// <summary>
         /// 面板物理像素尺寸变化时调用（在 UI 线程）。
         /// 渲染线程会在下一帧时感知到尺寸变化并重建输出链路。
         /// </summary>
