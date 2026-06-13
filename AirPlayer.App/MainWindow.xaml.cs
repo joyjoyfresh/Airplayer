@@ -61,7 +61,7 @@ namespace AirPlayer.App
         private DispatcherTimer? _controlHideTimer;    // 控制条自动隐藏定时器（3s）
         private DispatcherTimer? _toastTimer;          // 瞬时提示自动消失定时器
         private int _lastPresentedForFps;              // 上次呈现帧计数（算 FPS）
-        private bool _suppressSettingsEvents;          // 初始化时抑制开关回调
+        private bool _menuOpen;                         // 菜单是否打开（打开时不自动隐藏按钮）
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -115,20 +115,12 @@ namespace AirPlayer.App
         // v0.3：设置 / HUD / 控制条
         // ──────────────────────────────────────────────────────────────────
 
-        /// <summary>应用持久化设置到窗口与开关控件。</summary>
+        /// <summary>应用持久化设置到窗口（菜单项的勾选状态在菜单打开时同步）。</summary>
         private void ApplySettings()
         {
-            _suppressSettingsEvents = true;
-            try
-            {
-                if (_appWindow?.Presenter is OverlappedPresenter op)
-                    op.IsAlwaysOnTop = _settings.AlwaysOnTop;
-                AlwaysOnTopToggle.IsOn = _settings.AlwaysOnTop;
-                HudToggle.IsOn = _settings.ShowHud;
-                HudPanel.Visibility = _settings.ShowHud ? Visibility.Visible : Visibility.Collapsed;
-                DeviceNameBox.Text = _settings.DeviceName ?? "";
-            }
-            finally { _suppressSettingsEvents = false; }
+            if (_appWindow?.Presenter is OverlappedPresenter op)
+                op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+            HudPanel.Visibility = _settings.ShowHud ? Visibility.Visible : Visibility.Collapsed;
         }
 
         /// <summary>截图按钮：把当前帧保存为 PNG 到「图片\AirPlayer」。</summary>
@@ -157,13 +149,31 @@ namespace AirPlayer.App
             }
         }
 
-        /// <summary>自定义设备名失焦时持久化（重启生效）。</summary>
-        private void DeviceNameBox_LostFocus(object sender, RoutedEventArgs e)
+        /// <summary>菜单「设备名称…」：弹对话框编辑自定义 AirPlay 名（重启生效）。</summary>
+        private async void DeviceNameMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (_suppressSettingsEvents) return;
-            var name = DeviceNameBox.Text?.Trim();
-            _settings.DeviceName = string.IsNullOrEmpty(name) ? null : name;
-            _settings.Save();
+            var box = new TextBox
+            {
+                Text = _settings.DeviceName ?? "",
+                PlaceholderText = "留空则用计算机名"
+            };
+            var dlg = new ContentDialog
+            {
+                Title = "设备名称（重启生效）",
+                Content = box,
+                PrimaryButtonText = "保存",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = Content.XamlRoot
+            };
+            var result = await dlg.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                var name = box.Text?.Trim();
+                _settings.DeviceName = string.IsNullOrEmpty(name) ? null : name;
+                _settings.Save();
+                ShowToast("设备名已保存，重启生效");
+            }
         }
 
         /// <summary>底部瞬时提示（约 1.8 秒后自动消失）。</summary>
@@ -180,38 +190,44 @@ namespace AirPlayer.App
             _toastTimer.Start();
         }
 
-        /// <summary>窗口置顶开关。</summary>
-        private void AlwaysOnTopToggle_Toggled(object sender, RoutedEventArgs e)
+        /// <summary>菜单打开前：把开关项勾选状态同步到当前实际状态。</summary>
+        private void MainMenuFlyout_Opening(object? sender, object e)
         {
-            if (_suppressSettingsEvents) return;
-            _settings.AlwaysOnTop = AlwaysOnTopToggle.IsOn;
+            HudMenuItem.IsChecked = HudPanel.Visibility == Visibility.Visible;
+            AlwaysOnTopMenuItem.IsChecked =
+                (_appWindow?.Presenter as OverlappedPresenter)?.IsAlwaysOnTop ?? _settings.AlwaysOnTop;
+        }
+
+        /// <summary>菜单打开/关闭：维护标志，避免菜单开着时控制按钮被自动隐藏。</summary>
+        private void MainMenuFlyout_Opened(object? sender, object e) => _menuOpen = true;
+
+        private void MainMenuFlyout_Closed(object? sender, object e)
+        {
+            _menuOpen = false;
+            // 关闭后若在投屏，重新开始自动隐藏倒计时
+            _controlHideTimer?.Stop();
+            if (_isMirroringActive) _controlHideTimer?.Start();
+        }
+
+        /// <summary>菜单「窗口置顶」开关。</summary>
+        private void AlwaysOnTopMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            bool on = AlwaysOnTopMenuItem.IsChecked;
+            _settings.AlwaysOnTop = on;
             if (_appWindow?.Presenter is OverlappedPresenter op)
-                op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+                op.IsAlwaysOnTop = on;
             _settings.Save();
         }
 
-        /// <summary>HUD 显示开关（设置浮窗内）。</summary>
-        private void HudToggle_Toggled(object sender, RoutedEventArgs e)
-        {
-            if (_suppressSettingsEvents) return;
-            SetHudVisible(HudToggle.IsOn);
-        }
-
-        /// <summary>HUD 按钮：切换显示。</summary>
-        private void HudButton_Click(object sender, RoutedEventArgs e)
-            => SetHudVisible(HudPanel.Visibility != Visibility.Visible);
+        /// <summary>菜单「显示 HUD」开关。</summary>
+        private void HudMenuItem_Click(object sender, RoutedEventArgs e)
+            => SetHudVisible(HudMenuItem.IsChecked);
 
         /// <summary>统一设置 HUD 可见性并持久化。</summary>
         private void SetHudVisible(bool on)
         {
             HudPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
             _settings.ShowHud = on;
-            if (HudToggle.IsOn != on)
-            {
-                _suppressSettingsEvents = true;
-                HudToggle.IsOn = on;
-                _suppressSettingsEvents = false;
-            }
             _settings.Save();
         }
 
@@ -232,19 +248,20 @@ namespace AirPlayer.App
             HudText.Text = $"{s.Width}x{s.Height}   {fps} fps\n解码 {s.Decoded}  丢帧 {s.Skipped}";
         }
 
-        /// <summary>鼠标移动：显示控制条并重置自动隐藏计时（仅投屏时会隐藏）。</summary>
+        /// <summary>鼠标移动：显示菜单按钮并重置自动隐藏计时（仅投屏时会隐藏）。</summary>
         private void MainGrid_PointerMoved(object sender, PointerRoutedEventArgs e)
         {
-            ControlBar.Visibility = Visibility.Visible;
+            MenuButton.Visibility = Visibility.Visible;
             _controlHideTimer?.Stop();
             if (_isMirroringActive) _controlHideTimer?.Start();
         }
 
-        /// <summary>3 秒无操作：投屏中则隐藏控制条。</summary>
+        /// <summary>3 秒无操作：投屏中且菜单未打开时隐藏菜单按钮。</summary>
         private void ControlHideTimer_Tick(object? sender, object e)
         {
             _controlHideTimer?.Stop();
-            if (_isMirroringActive) ControlBar.Visibility = Visibility.Collapsed;
+            if (_menuOpen) return; // 菜单打开时不隐藏
+            if (_isMirroringActive) MenuButton.Visibility = Visibility.Collapsed;
         }
 
         /// <summary>获取本机第一个非回环 IPv4 地址。</summary>
@@ -335,9 +352,9 @@ namespace AirPlayer.App
                 _audioSink?.Dispose();
                 _audioSink = null;
 
-                // 投屏结束：恢复控制条常显，重置 HUD 计数
+                // 投屏结束：恢复菜单按钮常显，重置 HUD 计数
                 _controlHideTimer?.Stop();
-                ControlBar.Visibility = Visibility.Visible;
+                MenuButton.Visibility = Visibility.Visible;
                 _lastPresentedForFps = 0;
 
                 SwapPanel.Visibility  = Visibility.Collapsed;
@@ -661,18 +678,25 @@ namespace AirPlayer.App
 
             if (_rotationDegrees == 270)
             {
-                // 逆时针 90°：面板尺寸 = 窗口尺寸（交换），居中，视觉旋转 270°
+                // 逆时针 90°：居中 + 视觉旋转 270°
                 SwapPanel.HorizontalAlignment = HorizontalAlignment.Center;
                 SwapPanel.VerticalAlignment = VerticalAlignment.Center;
-
                 SwapPanel.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
                 SwapPanel.RenderTransform = new RotateTransform { Angle = 270 };
 
-                // 窗口按旋转后的比例调整（交换宽高）
-                CalculateWindowSizeForVideo(_videoHeight, _videoWidth, out int winW, out int winH);
-                _appWindow.Resize(new SizeInt32(winW, winH));
-
-                // 面板尺寸由 MainGrid_SizeChanged 设置（跟随窗口）
+                if (_isFullScreen)
+                {
+                    // 全屏下不能改窗口大小（会破坏全屏布局，导致画面缩到左上角、UI 消失）。
+                    // 直接按当前可视区域交换宽高，让旋转后的画面填满全屏。
+                    SwapPanel.Width = MainGrid.ActualHeight;
+                    SwapPanel.Height = MainGrid.ActualWidth;
+                }
+                else
+                {
+                    // 窗口模式：按旋转后比例调整窗口；面板尺寸由 MainGrid_SizeChanged 跟随设置
+                    CalculateWindowSizeForVideo(_videoHeight, _videoWidth, out int winW, out int winH);
+                    _appWindow.Resize(new SizeInt32(winW, winH));
+                }
             }
             else
             {
@@ -683,9 +707,12 @@ namespace AirPlayer.App
                 SwapPanel.Height = double.NaN;
                 SwapPanel.RenderTransform = null;
 
-                // 窗口按原始视频比例调整
-                CalculateWindowSizeForVideo(_videoWidth, _videoHeight, out int winW, out int winH);
-                _appWindow.Resize(new SizeInt32(winW, winH));
+                // 全屏下不改窗口大小，避免破坏全屏
+                if (!_isFullScreen)
+                {
+                    CalculateWindowSizeForVideo(_videoWidth, _videoHeight, out int winW, out int winH);
+                    _appWindow.Resize(new SizeInt32(winW, winH));
+                }
             }
         }
 
@@ -698,7 +725,6 @@ namespace AirPlayer.App
             {
                 _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
                 _isFullScreen = false;
-                FullScreenButton.Content = "";
 
                 // 退出全屏后恢复窗口尺寸（考虑旋转）
                 if (_pipelineReady && _videoAspectRatio > 0)
@@ -719,7 +745,13 @@ namespace AirPlayer.App
             {
                 _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
                 _isFullScreen = true;
-                FullScreenButton.Content = "";
+
+                // 进入全屏时若处于旋转状态，重新按全屏可视区域设置面板尺寸
+                if (_pipelineReady && _rotationDegrees == 270)
+                {
+                    SwapPanel.Width = MainGrid.ActualHeight;
+                    SwapPanel.Height = MainGrid.ActualWidth;
+                }
             }
         }
 
