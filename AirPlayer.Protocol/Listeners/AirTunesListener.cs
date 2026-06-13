@@ -36,10 +36,12 @@ namespace AirPlayer.Protocol.Listeners
             new byte[] { 0x46,0x50,0x4c,0x59,0x03,0x01,0x02,0x00,0x00,0x00,0x00,0x82,0x02,0x03,0x90,0x01,0xe1,0x72,0x7e,0x0f,0x57,0xf9,0xf5,0x88,0x0d,0xb1,0x04,0xa6,0x25,0x7a,0x23,0xf5,0xcf,0xff,0x1a,0xbb,0xe1,0xe9,0x30,0x45,0x25,0x1a,0xfb,0x97,0xeb,0x9f,0xc0,0x01,0x1e,0xbe,0x0f,0x3a,0x81,0xdf,0x5b,0x69,0x1d,0x76,0xac,0xb2,0xf7,0xa5,0xc7,0x08,0xe3,0xd3,0x28,0xf5,0x6b,0xb3,0x9d,0xbd,0xe5,0xf2,0x9c,0x8a,0x17,0xf4,0x81,0x48,0x7e,0x3a,0xe8,0x63,0xc6,0x78,0x32,0x54,0x22,0xe6,0xf7,0x8e,0x16,0x6d,0x18,0xaa,0x7f,0xd6,0x36,0x25,0x8b,0xce,0x28,0x72,0x6f,0x66,0x1f,0x73,0x88,0x93,0xce,0x44,0x31,0x1e,0x4b,0xe6,0xc0,0x53,0x51,0x93,0xe5,0xef,0x72,0xe8,0x68,0x62,0x33,0x72,0x9c,0x22,0x7d,0x82,0x0c,0x99,0x94,0x45,0xd8,0x92,0x46,0xc8,0xc3,0x59}
         };
         private readonly DumpConfig _dumpConfig;
+        private readonly int _preferredWidth;
+        private readonly int _preferredHeight;
 
         public string PublicKeyHex => BitConverter.ToString(_publicKey).Replace("-", string.Empty).ToLowerInvariant();
 
-        public AirTunesListener(IRtspReceiver receiver, ushort port, ushort airPlayPort, DumpConfig dumpConfig, string instance = "airserver", string deviceId = "11:22:33:44:55:66", byte[] seed = null) : base(port)
+        public AirTunesListener(IRtspReceiver receiver, ushort port, ushort airPlayPort, DumpConfig dumpConfig, string instance = "airserver", string deviceId = "11:22:33:44:55:66", byte[] seed = null, int preferredWidth = 1920, int preferredHeight = 1080) : base(port)
         {
             _airTunesPort = port;
             _airPlayPort = airPlayPort;
@@ -47,6 +49,8 @@ namespace AirPlayer.Protocol.Listeners
             _deviceId = deviceId;
             _receiver = receiver ?? throw new ArgumentNullException(nameof(receiver));
             _dumpConfig = dumpConfig ?? throw new ArgumentNullException(nameof(dumpConfig));
+            _preferredWidth = preferredWidth;
+            _preferredHeight = preferredHeight;
 
             // 用外部传入的随机种子生成 ED25519 密钥对；未提供时兜底随机生成，避免再用固定种子
             if (seed == null || seed.Length != 32)
@@ -92,11 +96,11 @@ namespace AirPlayer.Protocol.Listeners
                         { "rotation", true },
                         { "widthPhysical", 0 },
                         { "edid", "AP///////wAGEBOuhXxiyAoaAQS1PCJ4IA8FrlJDsCYOT1QAAAABAQEBAQEBAQEBAQEBAQEBAAAAEAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAA/ABpTWFjCiAgICAgICAgAAAAAAAAAAAAAAAAAAAAAAAAAqBwE3kDAAMAFIBuAYT/E58AL4AfAD8LUQACAAQAf4EY+hAAAQEAEnYx/Hj7/wIQiGLT+vj4/v//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADHkHATeQMAAwFQU+wABP8PnwAvAB8A/whBAAIABABM0AAE/w6fAC8AHwBvCD0AAgAEAMyRAAR/DJ8ALwAfAAcHMwACAAQAVV4ABP8JnwAvAB8AnwUoAAIABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB+Q" },
-                        { "widthPixels", 1920.0 },
+                        { "widthPixels", (double)_preferredWidth },
                         { "uuid", "061013ae-7b0f-4305-984b-974f677a150b" },
                         { "heightPhysical", 0 },
                         { "features", 30 },
-                        { "heightPixels", 1080.0 },
+                        { "heightPixels", (double)_preferredHeight },
                         { "overscanned", false }
                     }
                 });

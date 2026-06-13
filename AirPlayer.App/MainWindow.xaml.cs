@@ -431,11 +431,32 @@ namespace AirPlayer.App
             audioContainer.Children.Add(audioHeader);
             audioContainer.Children.Add(audioDeviceCombo);
 
+            // 5. 视频分辨率配置
+            var resolutionHeader = new TextBlock 
+            { 
+                Text = "视频设置", 
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, 
+                Margin = new Thickness(0, 8, 0, 0) 
+            };
+            var resolutionCombo = new ComboBox
+            {
+                Header = "分辨率限制 (修改后重启生效)",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            resolutionCombo.Items.Add("1080p (1920x1080)");
+            resolutionCombo.Items.Add("720p (1280x720)");
+            resolutionCombo.SelectedIndex = _settings.PreferredResolution == 720 ? 1 : 0;
+
+            var resolutionContainer = new StackPanel { Spacing = 6 };
+            resolutionContainer.Children.Add(resolutionHeader);
+            resolutionContainer.Children.Add(resolutionCombo);
+
             stackPanel.Children.Add(nameContainer);     // 设备名称
             stackPanel.Children.Add(hudSectionHeader);  // HUD 区块标题
             stackPanel.Children.Add(hudContainer);      // HUD 参数控件
             stackPanel.Children.Add(screenshotContainer); // 截图保存路径
             stackPanel.Children.Add(audioContainer);    // 音频设备
+            stackPanel.Children.Add(resolutionContainer); // 视频分辨率
 
             var scrollViewer = new Microsoft.UI.Xaml.Controls.ScrollViewer
             {
@@ -498,6 +519,11 @@ namespace AirPlayer.App
                 }
                 _settings.PreferredAudioDevice = newAudioDevice;
 
+                // 5. 保存视频分辨率设置
+                var oldRes = _settings.PreferredResolution;
+                _settings.PreferredResolution = resolutionCombo.SelectedIndex == 1 ? 720 : 1080;
+                bool resChanged = _settings.PreferredResolution != oldRes;
+
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
                 _settings.Save();
@@ -523,9 +549,9 @@ namespace AirPlayer.App
                 }
 
                 // 提示反馈
-                if (_settings.DeviceName != oldName)
+                if (_settings.DeviceName != oldName || resChanged)
                 {
-                    ShowToast("设置已保存，设备名重启生效");
+                    ShowToast("设置已保存，修改内容重启生效");
                 }
                 else
                 {
@@ -732,7 +758,11 @@ namespace AirPlayer.App
         {
             _cts = new CancellationTokenSource();
 
-            _receiver = new AirPlayReceiver(deviceName);
+            _receiver = new AirPlayReceiver(
+                deviceName,
+                preferredWidth: _settings.PreferredResolution == 720 ? 1280 : 1920,
+                preferredHeight: _settings.PreferredResolution == 720 ? 720 : 1080
+            );
             _receiver.OnMirroringStartedReceived += Receiver_OnMirroringStarted;
             _receiver.OnMirroringStoppedReceived += Receiver_OnMirroringStopped;
             _receiver.OnH264DataReceived         += Receiver_OnH264DataReceived;

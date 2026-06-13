@@ -32,7 +32,7 @@ namespace AirPlayer.Protocol
         private readonly ushort _airPlayPort;
         private readonly string _deviceId;
 
-        public AirPlayReceiver(string instance, ushort airTunesPort = 7020, ushort airPlayPort = 7021)
+        public AirPlayReceiver(string instance, int preferredWidth = 1920, int preferredHeight = 1080, ushort airTunesPort = 7020, ushort airPlayPort = 7021)
         {
             _instance = instance ?? throw new ArgumentNullException(nameof(instance));
             _airTunesPort = airTunesPort;
@@ -41,7 +41,7 @@ namespace AirPlayer.Protocol
             // 加载或生成本机随机身份（MAC + ED25519 种子），持久化后重启保持稳定
             var (deviceId, seed) = LoadOrCreateIdentity();
             _deviceId = deviceId;
-            _airTunesListener = new AirTunesListener(this, _airTunesPort, _airPlayPort, new Models.Configs.DumpConfig(), _instance, _deviceId, seed);
+            _airTunesListener = new AirTunesListener(this, _airTunesPort, _airPlayPort, new Models.Configs.DumpConfig(), _instance, _deviceId, seed, preferredWidth, preferredHeight);
         }
 
         /// <summary>

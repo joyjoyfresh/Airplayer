@@ -49,6 +49,9 @@ namespace AirPlayer.App
         /// <summary>视频缩放模式：true = 铺满屏幕（裁切），false = 显示完整（信箱/柱箱，默认）</summary>
         public bool FillScreen { get; set; } = false;
 
+        /// <summary>首选视频分辨率：1080 = 1080p，720 = 720p</summary>
+        public int PreferredResolution { get; set; } = 1080;
+
         private static string Dir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AirPlayer");
 
