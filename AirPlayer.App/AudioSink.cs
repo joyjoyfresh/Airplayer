@@ -70,6 +70,28 @@ namespace AirPlayer.App
         [DllImport("winmm.dll")]
         private static extern int waveOutClose(IntPtr hWaveOut);
 
+        [DllImport("winmm.dll")]
+        private static extern int waveOutGetNumDevs(); // 获取系统 waveOut 设备数量
+
+        // waveOut 设备能力结构体，szPname 最多 31 个字符（截断）
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+        private struct WAVEOUTCAPS
+        {
+            public ushort wMid;            // 制造商 ID
+            public ushort wPid;            // 产品 ID
+            public uint   vDriverVersion;  // 驱动版本
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string szPname;         // 设备名称（最多 31 字符）
+            public uint   dwFormats;       // 支持的格式位掩码
+            public ushort wChannels;       // 最大声道数
+            public ushort wReserved1;      // 保留
+            public uint   dwSupport;       // 功能标志
+        }
+
+        [DllImport("winmm.dll", CharSet = CharSet.Auto)]
+        private static extern int waveOutGetDevCaps(
+            int uDeviceID, ref WAVEOUTCAPS lpCaps, int cbCaps); // 获取指定索引设备的能力
+
         #endregion
 
         // ──────────────────────────── 音频参数 ────────────────────────────
@@ -105,7 +127,7 @@ namespace AirPlayer.App
         private bool             _initialized;    // 是否已成功初始化
         private bool             _disposed;       // 是否已释放
         private readonly AutoResetEvent _dataEvent = new(false); // 唤醒播放线程
-        private readonly string? _preferredDeviceId; // 首选设备 ID（目前 waveOut 不支持按 ID 选设备，保留字段）
+        private readonly string? _preferredDeviceId; // 首选设备名称，Initialize() 时通过 waveOutGetDevCaps 匹配索引
 
         // ──────────────────────────── PTS 时钟 ────────────────────────────
 
@@ -128,7 +150,7 @@ namespace AirPlayer.App
 
         public AudioSink(string? deviceId = null)
         {
-            _preferredDeviceId = deviceId; // 保留字段，waveOut 暂不支持按 DeviceId 选择
+            _preferredDeviceId = deviceId; // 设备名称，Initialize 时按名称查找 waveOut 索引
         }
 
         /// <summary>初始化 waveOut 设备并分配缓冲区，启动播放线程。</summary>
@@ -138,7 +160,35 @@ namespace AirPlayer.App
             {
                 AudioDiagLog.Write("[INIT] 开始初始化 AudioSink (waveOut)...");
 
-                // 打开 waveOut 设备（WAVE_MAPPER = 系统默认）
+                // 按首选设备名称查找 waveOut 设备索引，找不到则回退到系统默认
+                int deviceIndex = WAVE_MAPPER; // 默认使用系统默认设备
+                if (!string.IsNullOrEmpty(_preferredDeviceId))
+                {
+                    int numDevs = waveOutGetNumDevs(); // 枚举所有 waveOut 设备
+                    for (int i = 0; i < numDevs; i++)
+                    {
+                        var caps = new WAVEOUTCAPS();
+                        if (waveOutGetDevCaps(i, ref caps, Marshal.SizeOf<WAVEOUTCAPS>()) == MMSYSERR_NOERROR)
+                        {
+                            // szPname 最多 31 字符，可能被截断，做前缀匹配
+                            bool nameMatch =
+                                _preferredDeviceId.StartsWith(caps.szPname, StringComparison.OrdinalIgnoreCase) ||
+                                caps.szPname.StartsWith(
+                                    _preferredDeviceId.Substring(0, Math.Min(_preferredDeviceId.Length, 31)),
+                                    StringComparison.OrdinalIgnoreCase);
+                            if (nameMatch)
+                            {
+                                deviceIndex = i; // 命中，使用该索引
+                                AudioDiagLog.Write($"[INIT] 匹配到音频设备 [{i}]: {caps.szPname}");
+                                break;
+                            }
+                        }
+                    }
+                    if (deviceIndex == WAVE_MAPPER)
+                        AudioDiagLog.Write($"[INIT] 未找到设备 '{_preferredDeviceId}'，回退到系统默认");
+                }
+
+                // 打开 waveOut 设备（deviceIndex = WAVE_MAPPER 时使用系统默认）
                 var fmt = new WAVEFORMATEX
                 {
                     wFormatTag     = 1, // WAVE_FORMAT_PCM
@@ -150,8 +200,8 @@ namespace AirPlayer.App
                     cbSize         = 0
                 };
 
-                int mm = waveOutOpen(out _hWaveOut, WAVE_MAPPER, ref fmt,
-                                     IntPtr.Zero, IntPtr.Zero, CALLBACK_NULL);
+                int mm = waveOutOpen(out _hWaveOut, deviceIndex, ref fmt,
+                                     IntPtr.Zero, IntPtr.Zero, CALLBACK_NULL); // 使用匹配到的设备索引
                 if (mm != MMSYSERR_NOERROR)
                 {
                     AudioDiagLog.Write($"[INIT] waveOutOpen 失败: {mm}");

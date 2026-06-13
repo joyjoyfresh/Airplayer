@@ -140,9 +140,7 @@
                     <MenuFlyoutItem x:Name="ScreenshotMenuItem" Text="截图 (S)" Click="ScreenshotButton_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE722;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <ToggleMenuFlyoutItem x:Name="RecordMenuItem" Text="录制视频 (V)" Click="RecordMenuItem_Click">
-                        <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE7C8;"/></ToggleMenuFlyoutItem.Icon>
-                    </ToggleMenuFlyoutItem>
+
                     <MenuFlyoutItem x:Name="RotateMenuItem" Text="旋转画面 (R)" Click="RotateButton_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE777;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>

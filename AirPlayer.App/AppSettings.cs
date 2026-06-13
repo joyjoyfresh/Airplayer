@@ -43,11 +43,8 @@ namespace AirPlayer.App
         /// <summary>截图保存目录，如果为空或无效则使用默认路径（图片\AirPlayer）</summary>
         public string? ScreenshotSavePath { get; set; }
 
-        /// <summary>首选音频输出设备 ID（为 null 表示使用默认系统播放设备）</summary>
+        /// <summary>首选音频输出设备名称（为 null 表示使用默认系统播放设备）</summary>
         public string? PreferredAudioDevice { get; set; }
-
-        /// <summary>录像保存目录，如果为空或无效则使用默认路径（视频\AirPlayer）</summary>
-        public string? VideoSavePath { get; set; }
 
         private static string Dir => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AirPlayer");
