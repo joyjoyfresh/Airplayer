@@ -303,15 +303,41 @@ namespace AirPlayer.App
                 using (var audioBuffer = frame.LockBuffer(AudioBufferAccessMode.Write))
                 using (var reference = audioBuffer.CreateReference())
                 {
-                    var byteAccess = (IMemoryBufferByteAccess)reference;
-                    unsafe
+                    // 在 .NET 8 / CsWinRT 环境中，reference (IMemoryBufferReference) 无法直接转换为 IMemoryBufferByteAccess。
+                    // 必须通过低级别 COM 的 QueryInterface 获取原生 IUnknown 指针来进行转换。
+                    IntPtr pUnknown = Marshal.GetIUnknownForObject(reference);
+                    try
                     {
-                        byte* pBuffer;
-                        uint capacity;
-                        byteAccess.GetBuffer(out pBuffer, out capacity);
+                        Guid guid = new Guid("5B0D3235-4DBE-4DFA-8240-C7396FDE4115");
+                        int hr = Marshal.QueryInterface(pUnknown, ref guid, out IntPtr pByteAccess);
+                        if (hr == 0)
+                        {
+                            try
+                            {
+                                var byteAccess = (IMemoryBufferByteAccess)Marshal.GetObjectForIUnknown(pByteAccess);
+                                unsafe
+                                {
+                                    byte* pBuffer;
+                                    uint capacity;
+                                    byteAccess.GetBuffer(out pBuffer, out capacity);
 
-                        int copyLen = Math.Min((int)capacity, pcmData.Length);
-                        Marshal.Copy(pcmData.Data, 0, (IntPtr)pBuffer, copyLen);
+                                    int copyLen = Math.Min((int)capacity, pcmData.Length);
+                                    Marshal.Copy(pcmData.Data, 0, (IntPtr)pBuffer, copyLen);
+                                }
+                            }
+                            finally
+                            {
+                                Marshal.Release(pByteAccess);
+                            }
+                        }
+                        else
+                        {
+                            throw new COMException("QueryInterface for IMemoryBufferByteAccess failed", hr);
+                        }
+                    }
+                    finally
+                    {
+                        Marshal.Release(pUnknown);
                     }
                 }
 

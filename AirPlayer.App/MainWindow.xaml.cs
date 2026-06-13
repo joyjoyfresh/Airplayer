@@ -912,7 +912,7 @@ namespace AirPlayer.App
                 // 初始化音频播放器
                 if (_audioSink == null)
                 {
-                    _audioSink = new AudioSink();
+                    _audioSink = new AudioSink(_settings.PreferredAudioDevice);
                     _audioSink.Initialize();
                 }
             });
