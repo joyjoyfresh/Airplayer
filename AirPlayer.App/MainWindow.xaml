@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="AirPlayer Receiver">
+    Title="AirPlayer">
 
     <!-- 主网格，带有极具质感的深色背景 -->
     <Grid x:Name="MainGrid" Background="#090811">

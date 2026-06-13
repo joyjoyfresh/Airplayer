@@ -95,7 +95,7 @@ namespace AirPlayer.App
                 DiagLog.Write($"[UI] 设置窗口图标失败: {ex.Message}");
             }
 
-            this.Title = "AirPlayer Receiver";
+            this.Title = "AirPlayer";
             this.Closed += MainWindow_Closed;
 
             // 注册全局键盘快捷键（F11/Escape/R/H）
