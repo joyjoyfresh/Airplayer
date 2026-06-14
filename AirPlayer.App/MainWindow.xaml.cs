@@ -73,6 +73,9 @@ namespace AirPlayer.App
         private bool _menuOpen;                         // 菜单是否打开（打开时不自动隐藏按钮）
         private bool _titleThemeHooked;                 // 是否已订阅 ActualThemeChanged（避免重复订阅）
         private bool _micaActive;                        // 是否启用了 Mica 背景（影响根网格是否透明）
+        private TrayIcon? _tray;                          // 系统托盘图标
+        private bool _forceExit;                          // true 时关闭窗口直接退出（不再隐藏到托盘）
+        private bool _hiddenToTray;                       // 当前是否已隐藏到托盘
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -112,6 +115,21 @@ namespace AirPlayer.App
             catch (Exception ex)
             {
                 DiagLog.Write($"[UI] 启用 Mica 失败（非致命）: {ex.Message}");
+            }
+
+            // 系统托盘图标：左键还原，右键菜单（显示窗口 / 退出）；并拦截关闭按钮
+            try
+            {
+                string trayIconPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Assets", "AppIcon.ico");
+                _tray = new TrayIcon(hWnd, trayIconPath, "AirPlayer");
+                _tray.LeftClick     += ShowFromTray;
+                _tray.ShowRequested += ShowFromTray;
+                _tray.ExitRequested += ExitApp;
+                _appWindow.Closing  += AppWindow_Closing;
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[UI] 初始化托盘失败（非致命）: {ex.Message}");
             }
 
             this.Title = "AirPlayer";
@@ -248,6 +266,53 @@ namespace AirPlayer.App
             {
                 DiagLog.Write($"[UI] 标题栏主题上色失败（非致命）: {ex.Message}");
             }
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // 系统托盘 / 后台常驻
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>关闭按钮：按设置最小化到托盘后台常驻，或直接退出。</summary>
+        private void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
+        {
+            if (_settings.CloseToTray && !_forceExit)
+            {
+                args.Cancel = true; // 取消关闭，改为隐藏到托盘
+                HideToTray();
+            }
+        }
+
+        /// <summary>隐藏窗口到托盘（应用继续后台运行，接收投屏）。</summary>
+        private void HideToTray()
+        {
+            try
+            {
+                _appWindow?.Hide();
+                _hiddenToTray = true;
+            }
+            catch (Exception ex) { DiagLog.Write($"[UI] 隐藏到托盘失败: {ex.Message}"); }
+        }
+
+        /// <summary>从托盘还原并激活窗口。</summary>
+        private void ShowFromTray()
+        {
+            try
+            {
+                _appWindow?.Show();
+                _hiddenToTray = false;
+                _appWindow?.MoveInZOrderAtTop();
+                this.Activate();
+            }
+            catch (Exception ex) { DiagLog.Write($"[UI] 从托盘还原失败: {ex.Message}"); }
+        }
+
+        /// <summary>彻底退出应用（托盘右键「退出」）。</summary>
+        private void ExitApp()
+        {
+            _forceExit = true;       // 让 Closing 不再拦截
+            _tray?.Dispose();
+            _tray = null;
+            this.Close();            // 关闭主窗口 → 应用退出
         }
 
         /// <summary>截图按钮：把当前帧保存为 PNG 到「图片\AirPlayer」。</summary>
@@ -540,6 +605,34 @@ namespace AirPlayer.App
             var fpsContainer = new StackPanel { Spacing = 6 };
             fpsContainer.Children.Add(fpsCombo);
 
+            // 后台运行：关闭窗口行为
+            var closeBehaviorCombo = new ComboBox
+            {
+                Header = "关闭窗口时",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            closeBehaviorCombo.Items.Add("最小化到托盘（后台常驻）");
+            closeBehaviorCombo.Items.Add("直接退出");
+            closeBehaviorCombo.SelectedIndex = _settings.CloseToTray ? 0 : 1;
+            var closeBehaviorHeader = new TextBlock
+            {
+                Text = "后台运行",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            var closeBehaviorTip = new TextBlock
+            {
+                Text = "最小化到托盘后，有 iOS 设备投屏会自动弹出窗口；托盘图标右键可彻底退出。",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+            var closeBehaviorContainer = new StackPanel { Spacing = 6 };
+            closeBehaviorContainer.Children.Add(closeBehaviorHeader);
+            closeBehaviorContainer.Children.Add(closeBehaviorCombo);
+            closeBehaviorContainer.Children.Add(closeBehaviorTip);
+
             // 6.5 外观主题
             var themeCombo = new ComboBox
             {
@@ -688,7 +781,7 @@ namespace AirPlayer.App
             }
 
             var pivot = new Pivot { Width = 380, Height = 460 };
-            pivot.Items.Add(Tab("通用", nameContainer, screenshotContainer));
+            pivot.Items.Add(Tab("通用", nameContainer, closeBehaviorContainer, screenshotContainer));
             pivot.Items.Add(Tab("视频", resolutionContainer, fpsContainer));
             pivot.Items.Add(Tab("音频", audioContainer));
             pivot.Items.Add(Tab("外观", themeContainer, hudSectionHeader, hudContainer));
@@ -763,6 +856,9 @@ namespace AirPlayer.App
 
                 // 8. 保存外观主题（ApplySettings 会立即应用）
                 _settings.Theme = themeCombo.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
+
+                // 9. 保存关闭窗口行为（即时生效，下次关闭按此处理）
+                _settings.CloseToTray = closeBehaviorCombo.SelectedIndex == 0;
 
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
@@ -1058,6 +1154,9 @@ namespace AirPlayer.App
         {
             DispatcherQueue.TryEnqueue(() =>
             {
+                // 后台（托盘隐藏）状态下有设备投屏：自动弹出播放窗口
+                if (_hiddenToTray) ShowFromTray();
+
                 _isMirroringActive = true;
                 _gotKeyframe       = false;
                 _firstFrameLogged  = false;
@@ -1771,7 +1870,7 @@ namespace AirPlayer.App
             _receiver?.Dispose();  // 释放接收器
             StopVideoPipeline();   // 释放视频管线
             _audioSink?.Dispose(); // 释放音频播放器
-
+            _tray?.Dispose();      // 移除托盘图标
         }
     }
 }
