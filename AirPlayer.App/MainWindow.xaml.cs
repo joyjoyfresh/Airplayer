@@ -464,6 +464,119 @@ namespace AirPlayer.App
             var fpsContainer = new StackPanel { Spacing = 6 };
             fpsContainer.Children.Add(fpsCombo);
 
+            // 7. 快捷键设置（按键捕获，支持组合键，退出全屏固定为 Esc）
+            var shortcutHeader = new TextBlock
+            {
+                Text = "快捷键设置",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            var shortcutTip = new TextBlock
+            {
+                Text = "点击右侧按钮后，按下想要的按键（可配合 Ctrl/Shift/Alt 组合）。捕获时按 Esc 取消；退出全屏固定为 Esc。",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+
+            // 工作副本：在弹窗内编辑，确认后才写回设置
+            var pendingShortcuts = new System.Collections.Generic.Dictionary<string, string>();
+            foreach (var d in ShortcutDefs) pendingShortcuts[d.Id] = GetEffectiveShortcut(d.Id);
+            var rowButtons = new System.Collections.Generic.Dictionary<string, Button>();
+            string? capturingId = null; // 当前正在捕获的动作 id（同一时刻仅一个）
+
+            static string DisplayCombo(string c) => string.IsNullOrEmpty(c) ? "未设置" : c;
+
+            var shortcutContainer = new StackPanel { Spacing = 6, Margin = new Thickness(0, 0, 0, 4) };
+            shortcutContainer.Children.Add(shortcutHeader);
+            shortcutContainer.Children.Add(shortcutTip);
+
+            foreach (var d in ShortcutDefs)
+            {
+                string captureId = d.Id; // 供闭包捕获
+
+                var row = new Grid();
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                var label = new TextBlock { Text = d.Name, VerticalAlignment = VerticalAlignment.Center };
+                var btn = new Button
+                {
+                    Content = DisplayCombo(pendingShortcuts[captureId]),
+                    MinWidth = 130,
+                    HorizontalAlignment = HorizontalAlignment.Stretch
+                };
+                Grid.SetColumn(label, 0);
+                Grid.SetColumn(btn, 1);
+                row.Children.Add(label);
+                row.Children.Add(btn);
+                rowButtons[captureId] = btn;
+
+                // 点击进入捕获状态
+                btn.Click += (s, args) =>
+                {
+                    capturingId = captureId;
+                    btn.Content = "按下快捷键…(Esc 取消)";
+                    btn.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
+                };
+
+                // 捕获按键
+                btn.KeyDown += (s, args) =>
+                {
+                    if (capturingId != captureId) return;
+                    if (IsModifierKey(args.Key)) { args.Handled = true; return; } // 等待非修饰主键
+                    args.Handled = true;
+
+                    if (args.Key == Windows.System.VirtualKey.Escape)
+                    {
+                        btn.Content = DisplayCombo(pendingShortcuts[captureId]); // 取消，恢复原显示
+                        capturingId = null;
+                        return;
+                    }
+
+                    string combo = FormatCombo(args.Key);
+                    // 冲突处理：清除占用同一组合键的其它动作
+                    foreach (var other in ShortcutDefs)
+                    {
+                        if (other.Id != captureId &&
+                            string.Equals(pendingShortcuts[other.Id], combo, StringComparison.OrdinalIgnoreCase))
+                        {
+                            pendingShortcuts[other.Id] = "";
+                            rowButtons[other.Id].Content = DisplayCombo("");
+                        }
+                    }
+                    pendingShortcuts[captureId] = combo;
+                    btn.Content = DisplayCombo(combo);
+                    capturingId = null;
+                };
+
+                // 捕获中点到别处：取消并恢复显示
+                btn.LostFocus += (s, args) =>
+                {
+                    if (capturingId == captureId)
+                    {
+                        btn.Content = DisplayCombo(pendingShortcuts[captureId]);
+                        capturingId = null;
+                    }
+                };
+
+                shortcutContainer.Children.Add(row);
+            }
+
+            // 恢复默认快捷键
+            var resetShortcutsBtn = new Button { Content = "恢复默认快捷键", Margin = new Thickness(0, 4, 0, 0) };
+            resetShortcutsBtn.Click += (s, args) =>
+            {
+                capturingId = null;
+                foreach (var d in ShortcutDefs)
+                {
+                    pendingShortcuts[d.Id] = d.Default;
+                    rowButtons[d.Id].Content = DisplayCombo(d.Default);
+                }
+            };
+            shortcutContainer.Children.Add(resetShortcutsBtn);
+
             stackPanel.Children.Add(nameContainer);       // 1. 设备名称
             stackPanel.Children.Add(resolutionContainer); // 2. 视频分辨率
             stackPanel.Children.Add(fpsContainer);        // 3. 视频帧率
@@ -471,6 +584,7 @@ namespace AirPlayer.App
             stackPanel.Children.Add(screenshotContainer); // 5. 截图保存路径
             stackPanel.Children.Add(hudSectionHeader);    // 6. HUD 区块标题
             stackPanel.Children.Add(hudContainer);        // 6. HUD 参数控件
+            stackPanel.Children.Add(shortcutContainer);   // 7. 快捷键设置
 
             var scrollViewer = new Microsoft.UI.Xaml.Controls.ScrollViewer
             {
@@ -542,6 +656,9 @@ namespace AirPlayer.App
                 var oldFps = _settings.PreferredFps;
                 _settings.PreferredFps = fpsCombo.SelectedIndex == 1 ? 30 : 60;
                 bool fpsChanged = _settings.PreferredFps != oldFps;
+
+                // 7. 保存自定义快捷键（即时生效，无需重启）
+                _settings.Shortcuts = new System.Collections.Generic.Dictionary<string, string>(pendingShortcuts);
 
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
@@ -1221,53 +1338,135 @@ namespace AirPlayer.App
         /// <summary>全屏切换按钮</summary>
         private void FullScreenButton_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
 
-        /// <summary>键盘快捷键：F11 切换全屏，Escape 退出全屏，R 旋转画面，H 切换 HUD，S 屏幕截图，T 窗口置顶，Q 退出投屏，F 铺满屏幕（全屏投屏时）</summary>
+        // ──────────────────────────────────────────────────────────────────
+        // 可自定义快捷键
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>一个可自定义快捷键动作的元数据。</summary>
+        private sealed class ShortcutDef
+        {
+            public string Id = "";       // 动作 id（持久化键）
+            public string Name = "";     // 中文显示名
+            public string Default = "";  // 默认组合键字符串
+        }
+
+        /// <summary>所有可自定义动作（退出全屏固定为 Esc，不在此列）。</summary>
+        private static readonly ShortcutDef[] ShortcutDefs = new[]
+        {
+            new ShortcutDef { Id = "fullscreen", Name = "切换全屏",  Default = "F11" },
+            new ShortcutDef { Id = "rotate",     Name = "旋转画面",  Default = "R" },
+            new ShortcutDef { Id = "hud",        Name = "切换 HUD",  Default = "H" },
+            new ShortcutDef { Id = "ontop",      Name = "窗口置顶",  Default = "T" },
+            new ShortcutDef { Id = "stop",       Name = "退出投屏",  Default = "Q" },
+            new ShortcutDef { Id = "screenshot", Name = "屏幕截图",  Default = "S" },
+            new ShortcutDef { Id = "fill",       Name = "铺满屏幕",  Default = "F" },
+        };
+
+        /// <summary>取某动作当前生效的快捷键：优先用户自定义，缺省回退内置默认。</summary>
+        private string GetEffectiveShortcut(string id)
+        {
+            if (_settings.Shortcuts != null &&
+                _settings.Shortcuts.TryGetValue(id, out var v) && v != null)
+                return v;
+            foreach (var d in ShortcutDefs)
+                if (d.Id == id) return d.Default;
+            return "";
+        }
+
+        /// <summary>判断某虚拟键是否为修饰键（Ctrl/Shift/Alt/Win）。</summary>
+        private static bool IsModifierKey(Windows.System.VirtualKey k) =>
+            k == Windows.System.VirtualKey.Control || k == Windows.System.VirtualKey.LeftControl || k == Windows.System.VirtualKey.RightControl ||
+            k == Windows.System.VirtualKey.Shift   || k == Windows.System.VirtualKey.LeftShift   || k == Windows.System.VirtualKey.RightShift   ||
+            k == Windows.System.VirtualKey.Menu    || k == Windows.System.VirtualKey.LeftMenu     || k == Windows.System.VirtualKey.RightMenu     ||
+            k == Windows.System.VirtualKey.LeftWindows || k == Windows.System.VirtualKey.RightWindows;
+
+        /// <summary>查询某键当前是否被按下（WinUI3 桌面读取修饰键状态的标准方式）。</summary>
+        private static bool IsKeyDown(Windows.System.VirtualKey k) =>
+            (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(k)
+                & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+
+        /// <summary>把当前修饰键状态 + 主键格式化为统一的组合键字符串（如 "Ctrl+Shift+S"）。</summary>
+        private static string FormatCombo(Windows.System.VirtualKey key)
+        {
+            var sb = new System.Text.StringBuilder();
+            if (IsKeyDown(Windows.System.VirtualKey.Control)) sb.Append("Ctrl+");
+            if (IsKeyDown(Windows.System.VirtualKey.Menu))    sb.Append("Alt+");
+            if (IsKeyDown(Windows.System.VirtualKey.Shift))   sb.Append("Shift+");
+            sb.Append(key.ToString()); // 如 F、F11、S；与默认值书写一致
+            return sb.ToString();
+        }
+
+        /// <summary>从按键事件得到组合键字符串；若仅按下修饰键则返回 null。</summary>
+        private static string? ComboFromEvent(KeyRoutedEventArgs e)
+        {
+            if (IsModifierKey(e.Key)) return null;
+            return FormatCombo(e.Key);
+        }
+
+        /// <summary>键盘快捷键：Esc 退出全屏（固定），其余动作按「更多设置」中的自定义配置匹配触发。</summary>
         private void MainWindow_KeyDown(object sender, KeyRoutedEventArgs e)
         {
-            if (e.Key == Windows.System.VirtualKey.F11)
+            // 退出全屏固定为 Esc，最先处理
+            if (e.Key == Windows.System.VirtualKey.Escape && _isFullScreen)
             {
                 ToggleFullScreen();
                 e.Handled = true;
-            }
-            else if (e.Key == Windows.System.VirtualKey.Escape && _isFullScreen)
-            {
-                ToggleFullScreen();
-                e.Handled = true;
-            }
-            else if (e.Key == Windows.System.VirtualKey.R && !IsTextInputFocused())
-            {
-                RotateVideo();
-                e.Handled = true;
-            }
-            else if (e.Key == Windows.System.VirtualKey.H && !IsTextInputFocused())
-            {
-                SetHudVisible(HudPanel.Visibility != Visibility.Visible);
-                e.Handled = true;
-            }
-            else if (e.Key == Windows.System.VirtualKey.T && !IsTextInputFocused())
-            {
-                ToggleAlwaysOnTop();
-                e.Handled = true;
-            }
-            else if (e.Key == Windows.System.VirtualKey.Q && _isMirroringActive && !IsTextInputFocused())
-            {
-                _receiver?.StopActiveMirroring();
-                e.Handled = true;
-            }
-            else if (e.Key == Windows.System.VirtualKey.S && !IsTextInputFocused())
-            {
-                TakeScreenshot();
-                e.Handled = true;
-            }
-            else if (e.Key == Windows.System.VirtualKey.F && _isMirroringActive && _isFullScreen && !IsTextInputFocused())
-            {
-                _settings.FillScreen = !_settings.FillScreen;
-                _settings.Save();
-                _presenter?.SetFillMode(_settings.FillScreen);
-                ShowToast(_settings.FillScreen ? "铺满屏幕" : "显示完整");
-                e.Handled = true;
+                return;
             }
 
+            string? combo = ComboFromEvent(e);
+            if (combo == null) return; // 仅按下修饰键
+
+            // 纯输入键（不含 Ctrl/Alt）时，若焦点在文本框则不触发，避免打断输入
+            bool hasCtrlAlt = combo.StartsWith("Ctrl+") || combo.Contains("Alt+");
+            if (!hasCtrlAlt && IsTextInputFocused()) return;
+
+            foreach (var def in ShortcutDefs)
+            {
+                if (string.Equals(GetEffectiveShortcut(def.Id), combo, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (RunShortcut(def.Id))
+                        e.Handled = true;
+                    break;
+                }
+            }
+        }
+
+        /// <summary>执行某快捷键动作（含状态前提判断）。返回是否实际触发。</summary>
+        private bool RunShortcut(string id)
+        {
+            switch (id)
+            {
+                case "fullscreen":
+                    ToggleFullScreen();
+                    return true;
+                case "rotate":
+                    RotateVideo();
+                    return true;
+                case "hud":
+                    SetHudVisible(HudPanel.Visibility != Visibility.Visible);
+                    return true;
+                case "ontop":
+                    ToggleAlwaysOnTop();
+                    return true;
+                case "stop":
+                    if (_isMirroringActive) { _receiver?.StopActiveMirroring(); return true; }
+                    return false;
+                case "screenshot":
+                    TakeScreenshot();
+                    return true;
+                case "fill":
+                    if (_isMirroringActive && _isFullScreen)
+                    {
+                        _settings.FillScreen = !_settings.FillScreen;
+                        _settings.Save();
+                        _presenter?.SetFillMode(_settings.FillScreen);
+                        ShowToast(_settings.FillScreen ? "铺满屏幕" : "显示完整");
+                        return true;
+                    }
+                    return false;
+            }
+            return false;
         }
 
         /// <summary>当前焦点是否在文本输入控件上（避免单字母快捷键打断输入）。</summary>
