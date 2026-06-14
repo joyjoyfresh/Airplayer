@@ -56,6 +56,9 @@ namespace AirPlayer.App
         /// <summary>首选视频播放帧率：30 = 30fps，60 = 60fps</summary>
         public int PreferredFps { get; set; } = 60;
 
+        /// <summary>界面主题："System"=跟随系统，"Light"=浅色，"Dark"=深色</summary>
+        public string Theme { get; set; } = "System";
+
         /// <summary>
         /// 用户自定义快捷键：键=动作 id（如 "rotate"），值=组合键字符串（如 "Ctrl+Shift+S"、"R"，空串表示禁用）。
         /// 缺省项回退到代码内置默认值。详见 MainWindow 的 ShortcutDefs。
@@ -82,6 +85,7 @@ namespace AirPlayer.App
                         if (string.IsNullOrEmpty(s.HudTextColor)) s.HudTextColor = "#00E676";
                         if (s.HudBgOpacity < 0 || s.HudBgOpacity > 1) s.HudBgOpacity = 0.56;
                         if (s.Shortcuts == null) s.Shortcuts = new Dictionary<string, string>(); // 旧配置文件无此字段
+                        if (string.IsNullOrEmpty(s.Theme)) s.Theme = "System"; // 旧配置文件无此字段
                         return s;
                     }
                 }

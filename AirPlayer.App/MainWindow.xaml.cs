@@ -163,6 +163,17 @@ namespace AirPlayer.App
         {
             if (_appWindow?.Presenter is OverlappedPresenter op)
                 op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+
+            // 应用界面主题：跟随系统 / 浅色 / 深色（设到根元素，立即生效）
+            if (this.Content is FrameworkElement root)
+            {
+                root.RequestedTheme = _settings.Theme switch
+                {
+                    "Light" => Microsoft.UI.Xaml.ElementTheme.Light,
+                    "Dark"  => Microsoft.UI.Xaml.ElementTheme.Dark,
+                    _       => Microsoft.UI.Xaml.ElementTheme.Default, // 跟随系统
+                };
+            }
             
             HudPanel.Visibility = _settings.ShowHud ? Visibility.Visible : Visibility.Collapsed;
 
@@ -464,6 +475,26 @@ namespace AirPlayer.App
             var fpsContainer = new StackPanel { Spacing = 6 };
             fpsContainer.Children.Add(fpsCombo);
 
+            // 6.5 外观主题
+            var themeCombo = new ComboBox
+            {
+                Header = "外观主题",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            themeCombo.Items.Add("跟随系统");
+            themeCombo.Items.Add("浅色");
+            themeCombo.Items.Add("深色");
+            themeCombo.SelectedIndex = _settings.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };
+            var themeHeader = new TextBlock
+            {
+                Text = "外观",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            var themeContainer = new StackPanel { Spacing = 6 };
+            themeContainer.Children.Add(themeHeader);
+            themeContainer.Children.Add(themeCombo);
+
             // 7. 快捷键设置（按键捕获，支持组合键，退出全屏固定为 Esc）
             var shortcutHeader = new TextBlock
             {
@@ -581,6 +612,7 @@ namespace AirPlayer.App
             stackPanel.Children.Add(resolutionContainer); // 2. 视频分辨率
             stackPanel.Children.Add(fpsContainer);        // 3. 视频帧率
             stackPanel.Children.Add(audioContainer);      // 4. 音频设备
+            stackPanel.Children.Add(themeContainer);      // 4.5 外观主题
             stackPanel.Children.Add(screenshotContainer); // 5. 截图保存路径
             stackPanel.Children.Add(hudSectionHeader);    // 6. HUD 区块标题
             stackPanel.Children.Add(hudContainer);        // 6. HUD 参数控件
@@ -659,6 +691,9 @@ namespace AirPlayer.App
 
                 // 7. 保存自定义快捷键（即时生效，无需重启）
                 _settings.Shortcuts = new System.Collections.Generic.Dictionary<string, string>(pendingShortcuts);
+
+                // 8. 保存外观主题（ApplySettings 会立即应用）
+                _settings.Theme = themeCombo.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
 
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
