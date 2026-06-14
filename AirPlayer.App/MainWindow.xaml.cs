@@ -282,11 +282,15 @@ namespace AirPlayer.App
             }
         }
 
-        /// <summary>隐藏窗口到托盘（应用继续后台运行，接收投屏）。</summary>
+        /// <summary>隐藏窗口到托盘（应用继续后台运行，接收投屏）。隐藏前先断开当前投屏。</summary>
         private void HideToTray()
         {
             try
             {
+                // 先断开当前投屏，再隐藏到托盘（下次有设备投屏会自动弹窗）
+                if (_isMirroringActive)
+                    _receiver?.StopActiveMirroring();
+
                 _appWindow?.Hide();
                 _hiddenToTray = true;
             }
