@@ -8,6 +8,39 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- 应用级主题配色：随 RequestedTheme（浅色/深色/跟随系统）自动切换。
+                 "Default" 用于深色主题，"Light" 用于浅色主题。 -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="AppBgBrush" Color="#090811"/>
+                    <SolidColorBrush x:Key="PrimaryTextBrush" Color="#FFFFFF"/>
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#A0A0C0"/>
+                    <SolidColorBrush x:Key="CaptionTextBrush" Color="#8080A0"/>
+                    <SolidColorBrush x:Key="IpTextBrush" Color="#6868A0"/>
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#1A1530"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#302550"/>
+                    <SolidColorBrush x:Key="AccentGreenBrush" Color="#00E676"/>
+                    <SolidColorBrush x:Key="MenuBtnFgBrush" Color="#FFFFFF"/>
+                    <SolidColorBrush x:Key="MenuBtnBgBrush" Color="#30000000"/>
+                    <SolidColorBrush x:Key="ToastBgBrush" Color="#CC1A1530"/>
+                    <SolidColorBrush x:Key="ToastTextBrush" Color="#FFFFFF"/>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="AppBgBrush" Color="#F2F3F7"/>
+                    <SolidColorBrush x:Key="PrimaryTextBrush" Color="#15152B"/>
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#5A5A78"/>
+                    <SolidColorBrush x:Key="CaptionTextBrush" Color="#6A6A88"/>
+                    <SolidColorBrush x:Key="IpTextBrush" Color="#7E7EA0"/>
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#FFFFFF"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#E2E2EC"/>
+                    <SolidColorBrush x:Key="AccentGreenBrush" Color="#0A9A4E"/>
+                    <SolidColorBrush x:Key="MenuBtnFgBrush" Color="#23233A"/>
+                    <SolidColorBrush x:Key="MenuBtnBgBrush" Color="#18000000"/>
+                    <SolidColorBrush x:Key="ToastBgBrush" Color="#F0FFFFFF"/>
+                    <SolidColorBrush x:Key="ToastTextBrush" Color="#15152B"/>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

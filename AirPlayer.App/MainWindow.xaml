@@ -8,8 +8,8 @@
     mc:Ignorable="d"
     Title="AirPlayer">
 
-    <!-- 主网格，带有极具质感的深色背景 -->
-    <Grid x:Name="MainGrid" Background="#090811">
+    <!-- 主网格，背景随主题切换（浅色/深色/跟随系统）-->
+    <Grid x:Name="MainGrid" Background="{ThemeResource AppBgBrush}">
         <Grid.Resources>
             <!-- 等待连接界面的极简脉动呼吸光晕动画 -->
             <Storyboard x:Name="PulseStoryboard" RepeatBehavior="Forever">
@@ -67,35 +67,35 @@
                 <Image Source="Assets/AppIcon.png" Width="96" Height="96" HorizontalAlignment="Center"/>
                 
                 <!-- 主状态文案 -->
-                <TextBlock 
-                    x:Name="StatusTitle" 
-                    Text="准备就绪" 
-                    FontSize="28" 
-                    FontWeight="Bold" 
-                    Foreground="White" 
+                <TextBlock
+                    x:Name="StatusTitle"
+                    Text="准备就绪"
+                    FontSize="28"
+                    FontWeight="Bold"
+                    Foreground="{ThemeResource PrimaryTextBrush}"
                     HorizontalAlignment="Center"
                     FontFamily="Segoe UI Variable, Segoe UI, Microsoft YaHei"/>
 
                 <!-- 副状态文案 -->
                 <TextBlock 
-                    x:Name="StatusSubtitle" 
-                    Text="在 iOS 设备上拉下控制中心，点击「屏幕镜像」投屏" 
-                    FontSize="16" 
-                    Foreground="#A0A0C0" 
+                    x:Name="StatusSubtitle"
+                    Text="在 iOS 设备上拉下控制中心，点击「屏幕镜像」投屏"
+                    FontSize="16"
+                    Foreground="{ThemeResource SecondaryTextBrush}"
                     HorizontalAlignment="Center"
                     FontFamily="Segoe UI Variable, Segoe UI, Microsoft YaHei"/>
 
                 <!-- 磨砂边缘设备名称提示牌 -->
-                <Border Background="#1A1530" CornerRadius="12" Padding="24,14" HorizontalAlignment="Center" BorderBrush="#302550" BorderThickness="1">
+                <Border Background="{ThemeResource CardBgBrush}" CornerRadius="12" Padding="24,14" HorizontalAlignment="Center" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock Text="设备名称：" Foreground="#8080A0" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                        <TextBlock Text="设备名称：" Foreground="{ThemeResource CaptionTextBrush}" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
                         <!-- 连接设备绿字突出 -->
-                        <TextBlock x:Name="DeviceNameText" Text="AirPlayer" Foreground="#00E676" FontWeight="SemiBold" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                        <TextBlock x:Name="DeviceNameText" Text="AirPlayer" Foreground="{ThemeResource AccentGreenBrush}" FontWeight="SemiBold" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
                     </StackPanel>
                 </Border>
 
                 <!-- 本机局域网 IP，方便确认在同一网络 -->
-                <TextBlock x:Name="IpText" Text="" Foreground="#6868A0" FontSize="13" HorizontalAlignment="Center" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                <TextBlock x:Name="IpText" Text="" Foreground="{ThemeResource IpTextBrush}" FontSize="13" HorizontalAlignment="Center" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
             </StackPanel>
         </Grid>
         
@@ -124,8 +124,8 @@
             Content="&#xE712;"
             FontFamily="Segoe MDL2 Assets"
             FontSize="18"
-            Foreground="White"
-            Background="#30000000"
+            Foreground="{ThemeResource MenuBtnFgBrush}"
+            Background="{ThemeResource MenuBtnBgBrush}"
             BorderThickness="0"
             Width="40"
             Height="40"
@@ -173,12 +173,12 @@
                 HorizontalAlignment="Center"
                 VerticalAlignment="Bottom"
                 Margin="0,0,0,48"
-                Background="#CC1A1530"
-                BorderBrush="#302550"
+                Background="{ThemeResource ToastBgBrush}"
+                BorderBrush="{ThemeResource CardBorderBrush}"
                 BorderThickness="1"
                 CornerRadius="10"
                 Padding="18,10">
-            <TextBlock x:Name="ToastText" Foreground="White" FontSize="14"
+            <TextBlock x:Name="ToastText" Foreground="{ThemeResource ToastTextBrush}" FontSize="14"
                        FontFamily="Segoe UI Variable, Microsoft YaHei"/>
         </Border>
     </Grid>
