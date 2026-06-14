@@ -72,6 +72,7 @@ namespace AirPlayer.App
         private int _lastPresentedForFps;              // 上次呈现帧计数（算 FPS）
         private bool _menuOpen;                         // 菜单是否打开（打开时不自动隐藏按钮）
         private bool _titleThemeHooked;                 // 是否已订阅 ActualThemeChanged（避免重复订阅）
+        private bool _micaActive;                        // 是否启用了 Mica 背景（影响根网格是否透明）
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -97,6 +98,22 @@ namespace AirPlayer.App
                 DiagLog.Write($"[UI] 设置窗口图标失败: {ex.Message}");
             }
 
+            // Mica 背景：Win11 支持时启用，让待机页呈现 Fluent 磨砂质感（随主题明暗自动适配）。
+            // 启用后把根网格背景透明化以透出 Mica；旧系统不支持则保留主题纯色背景。
+            try
+            {
+                if (Microsoft.UI.Composition.SystemBackdrops.MicaController.IsSupported())
+                {
+                    this.SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+                    _micaActive = true;
+                    MainGrid.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[UI] 启用 Mica 失败（非致命）: {ex.Message}");
+            }
+
             this.Title = "AirPlayer";
             this.Closed += MainWindow_Closed;
 
@@ -111,9 +128,8 @@ namespace AirPlayer.App
                 ? Environment.MachineName : _settings.DeviceName!;
             DeviceNameText.Text = hostName;
 
-            // 待机页显示本机局域网 IP
-            string ip = GetLocalIPv4();
-            IpText.Text = string.IsNullOrEmpty(ip) ? "" : $"本机 IP：{ip}";
+            // 待机页信息卡：本机 IP + 当前网络名
+            UpdateStandbyInfo();
 
             // 应用持久化设置（置顶 / HUD），并同步设置浮窗开关状态
             ApplySettings();
@@ -213,13 +229,16 @@ namespace AirPlayer.App
                 var hoverBg  = dark ? C(40, 0xFF, 0xFF, 0xFF) : C(40, 0x00, 0x00, 0x00);   // 悬停背景
                 var pressBg  = dark ? C(70, 0xFF, 0xFF, 0xFF) : C(70, 0x00, 0x00, 0x00);   // 按下背景
 
-                tb.BackgroundColor = bg;
-                tb.InactiveBackgroundColor = bg;
+                // 启用 Mica 时标题栏背景透明以透出磨砂；否则用与主界面一致的纯色
+                var barBg = _micaActive ? Microsoft.UI.Colors.Transparent : bg;
+
+                tb.BackgroundColor = barBg;
+                tb.InactiveBackgroundColor = barBg;
                 tb.ForegroundColor = fg;
                 tb.InactiveForegroundColor = fgInact;
 
-                tb.ButtonBackgroundColor = bg;
-                tb.ButtonInactiveBackgroundColor = bg;
+                tb.ButtonBackgroundColor = barBg;
+                tb.ButtonInactiveBackgroundColor = barBg;
                 tb.ButtonForegroundColor = fg;
                 tb.ButtonInactiveForegroundColor = fgInact;
                 tb.ButtonHoverForegroundColor = fg;
@@ -289,8 +308,6 @@ namespace AirPlayer.App
         /// <summary>菜单「更多设置…」：弹窗进行本机名称、HUD相关参数（大小、颜色、透明度等）等综合设置。</summary>
         private async void SettingsMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            var stackPanel = new StackPanel { Spacing = 16, Width = 300 };
-
             // 1. 设备名称配置
             var nameHeader = new TextBlock 
             { 
@@ -658,28 +675,31 @@ namespace AirPlayer.App
             };
             shortcutContainer.Children.Add(resetShortcutsBtn);
 
-            stackPanel.Children.Add(nameContainer);       // 1. 设备名称
-            stackPanel.Children.Add(resolutionContainer); // 2. 视频分辨率
-            stackPanel.Children.Add(fpsContainer);        // 3. 视频帧率
-            stackPanel.Children.Add(audioContainer);      // 4. 音频设备
-            stackPanel.Children.Add(themeContainer);      // 4.5 外观主题
-            stackPanel.Children.Add(screenshotContainer); // 5. 截图保存路径
-            stackPanel.Children.Add(hudSectionHeader);    // 6. HUD 区块标题
-            stackPanel.Children.Add(hudContainer);        // 6. HUD 参数控件
-            stackPanel.Children.Add(shortcutContainer);   // 7. 快捷键设置
-
-            var scrollViewer = new Microsoft.UI.Xaml.Controls.ScrollViewer
+            // 分类标签页：把设置按 通用/视频/音频/外观/快捷键 分组，避免一长条滚动
+            ScrollViewer Scroll(StackPanel sp) => new Microsoft.UI.Xaml.Controls.ScrollViewer
             {
-                Content = stackPanel,
+                Content = sp,
                 VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Disabled,
-                MaxHeight = 450
+                HorizontalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Disabled
             };
+            PivotItem Tab(string header, params UIElement[] items)
+            {
+                var sp = new StackPanel { Spacing = 16, Margin = new Thickness(2, 8, 14, 8) };
+                foreach (var it in items) sp.Children.Add(it);
+                return new PivotItem { Header = header, Content = Scroll(sp) };
+            }
+
+            var pivot = new Pivot { Width = 380, Height = 460 };
+            pivot.Items.Add(Tab("通用", nameContainer, screenshotContainer));
+            pivot.Items.Add(Tab("视频", resolutionContainer, fpsContainer));
+            pivot.Items.Add(Tab("音频", audioContainer));
+            pivot.Items.Add(Tab("外观", themeContainer, hudSectionHeader, hudContainer));
+            pivot.Items.Add(Tab("快捷键", shortcutContainer));
 
             var dlg = new ContentDialog
             {
                 Title = "更多设置",
-                Content = scrollViewer,
+                Content = pivot,
                 PrimaryButtonText = "保存",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Primary,
@@ -904,6 +924,29 @@ namespace AirPlayer.App
             if (_isMirroringActive) MenuButton.Visibility = Visibility.Collapsed;
         }
 
+        /// <summary>刷新待机页信息卡：本机 IP 与当前网络名。</summary>
+        private void UpdateStandbyInfo()
+        {
+            string ip = GetLocalIPv4();
+            IpText.Text = string.IsNullOrEmpty(ip) ? "未连接网络" : ip;
+            WifiText.Text = GetNetworkName();
+        }
+
+        /// <summary>获取当前已联网的网络名称（Wi-Fi 为 SSID，有线为适配器名）。</summary>
+        private static string GetNetworkName()
+        {
+            try
+            {
+                var profile = Windows.Networking.Connectivity.NetworkInformation.GetInternetConnectionProfile();
+                string? name = profile?.ProfileName;
+                return string.IsNullOrEmpty(name) ? "—" : name;
+            }
+            catch
+            {
+                return "—";
+            }
+        }
+
         /// <summary>获取本机第一个非回环 IPv4 地址。</summary>
         private static string GetLocalIPv4()
         {
@@ -1031,6 +1074,8 @@ namespace AirPlayer.App
                     _audioSink.Initialize();
                     _audioSink.SetVolume(_lastAirplayVolume); // 应用 iOS 端当前音量（可能在建播放器前已下发）
                 }
+
+                ShowToast("已连接，正在投屏…"); // 连接反馈
             });
         }
 
@@ -1053,6 +1098,10 @@ namespace AirPlayer.App
 
                 SwapPanel.Visibility  = Visibility.Collapsed;
                 PromoGrid.Visibility  = Visibility.Visible;
+
+                // 刷新待机信息（IP/网络可能已变化）并提示
+                UpdateStandbyInfo();
+                ShowToast("投屏已结束");
 
                 // 恢复投屏前保存的待机态窗口位置和大小
                 RestoreWindowPosition();

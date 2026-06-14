@@ -85,17 +85,35 @@
                     HorizontalAlignment="Center"
                     FontFamily="Segoe UI Variable, Segoe UI, Microsoft YaHei"/>
 
-                <!-- 磨砂边缘设备名称提示牌 -->
-                <Border Background="{ThemeResource CardBgBrush}" CornerRadius="12" Padding="24,14" HorizontalAlignment="Center" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock Text="设备名称：" Foreground="{ThemeResource CaptionTextBrush}" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
-                        <!-- 连接设备绿字突出 -->
-                        <TextBlock x:Name="DeviceNameText" Text="AirPlayer" Foreground="{ThemeResource AccentGreenBrush}" FontWeight="SemiBold" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                <!-- 信息卡：设备名 / 本机 IP / 网络，方便确认手机与电脑在同一网络 -->
+                <Border Background="{ThemeResource CardBgBrush}" CornerRadius="14" Padding="22,16" HorizontalAlignment="Center" MinWidth="300" BorderBrush="{ThemeResource CardBorderBrush}" BorderThickness="1">
+                    <StackPanel Spacing="11">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="84"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="设备名称" Foreground="{ThemeResource CaptionTextBrush}" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                            <TextBlock Grid.Column="1" x:Name="DeviceNameText" Text="AirPlayer" Foreground="{ThemeResource AccentGreenBrush}" FontWeight="SemiBold" FontSize="14" HorizontalAlignment="Right" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="84"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="本机 IP" Foreground="{ThemeResource CaptionTextBrush}" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                            <TextBlock Grid.Column="1" x:Name="IpText" Text="—" Foreground="{ThemeResource PrimaryTextBrush}" FontSize="14" HorizontalAlignment="Right" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                        </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="84"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="网络" Foreground="{ThemeResource CaptionTextBrush}" FontSize="14" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                            <TextBlock Grid.Column="1" x:Name="WifiText" Text="—" Foreground="{ThemeResource PrimaryTextBrush}" FontSize="14" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
-
-                <!-- 本机局域网 IP，方便确认在同一网络 -->
-                <TextBlock x:Name="IpText" Text="" Foreground="{ThemeResource IpTextBrush}" FontSize="13" HorizontalAlignment="Center" FontFamily="Segoe UI Variable, Microsoft YaHei"/>
             </StackPanel>
         </Grid>
         
@@ -106,8 +124,8 @@
                 VerticalAlignment="Top"
                 Margin="20"
                 Background="#90000000"
-                CornerRadius="8"
-                Padding="12,8">
+                CornerRadius="12"
+                Padding="14,9">
             <TextBlock x:Name="HudText"
                        Foreground="#00E676"
                        FontFamily="Consolas, Cascadia Mono"
