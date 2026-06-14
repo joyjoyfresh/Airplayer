@@ -13,13 +13,15 @@
                  "Default" 用于深色主题，"Light" 用于浅色主题。 -->
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Default">
-                    <SolidColorBrush x:Key="AppBgBrush" Color="#090811"/>
+                    <!-- 背景 85% 主题色叠在 Mica 上：深色模式确保够暗，又透出一点磨砂质感 -->
+                    <SolidColorBrush x:Key="AppBgBrush" Color="#D9090811"/>
                     <SolidColorBrush x:Key="PrimaryTextBrush" Color="#FFFFFF"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#A0A0C0"/>
                     <SolidColorBrush x:Key="CaptionTextBrush" Color="#8080A0"/>
                     <SolidColorBrush x:Key="IpTextBrush" Color="#6868A0"/>
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#1A1530"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="#302550"/>
+                    <!-- 信息卡：低透明度磨砂，弱化存在感 -->
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#1FFFFFFF"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#2EFFFFFF"/>
                     <SolidColorBrush x:Key="AccentGreenBrush" Color="#00E676"/>
                     <SolidColorBrush x:Key="MenuBtnFgBrush" Color="#FFFFFF"/>
                     <SolidColorBrush x:Key="MenuBtnBgBrush" Color="#30000000"/>
@@ -27,13 +29,13 @@
                     <SolidColorBrush x:Key="ToastTextBrush" Color="#FFFFFF"/>
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Light">
-                    <SolidColorBrush x:Key="AppBgBrush" Color="#F2F3F7"/>
+                    <SolidColorBrush x:Key="AppBgBrush" Color="#D9F2F3F7"/>
                     <SolidColorBrush x:Key="PrimaryTextBrush" Color="#15152B"/>
                     <SolidColorBrush x:Key="SecondaryTextBrush" Color="#5A5A78"/>
                     <SolidColorBrush x:Key="CaptionTextBrush" Color="#6A6A88"/>
                     <SolidColorBrush x:Key="IpTextBrush" Color="#7E7EA0"/>
-                    <SolidColorBrush x:Key="CardBgBrush" Color="#FFFFFF"/>
-                    <SolidColorBrush x:Key="CardBorderBrush" Color="#E2E2EC"/>
+                    <SolidColorBrush x:Key="CardBgBrush" Color="#99FFFFFF"/>
+                    <SolidColorBrush x:Key="CardBorderBrush" Color="#1F000000"/>
                     <SolidColorBrush x:Key="AccentGreenBrush" Color="#0A9A4E"/>
                     <SolidColorBrush x:Key="MenuBtnFgBrush" Color="#23233A"/>
                     <SolidColorBrush x:Key="MenuBtnBgBrush" Color="#18000000"/>

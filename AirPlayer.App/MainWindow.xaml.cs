@@ -106,7 +106,7 @@ namespace AirPlayer.App
                 {
                     this.SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
                     _micaActive = true;
-                    MainGrid.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+                    // 根网格保留半透明主题背景（AppBgBrush），透出少量 Mica 又保证深色够暗
                 }
             }
             catch (Exception ex)
@@ -223,22 +223,20 @@ namespace AirPlayer.App
                 bool dark = actual == Microsoft.UI.Xaml.ElementTheme.Dark;
                 Windows.UI.Color C(byte a, byte r, byte g, byte b) => Windows.UI.Color.FromArgb(a, r, g, b);
 
-                var bg       = dark ? C(255, 0x09, 0x08, 0x11) : C(255, 0xF2, 0xF3, 0xF7); // 与主界面背景一致
+                // 背景与根网格 AppBgBrush 一致：85% 主题色叠在 Mica 上，深色够暗又透出磨砂
+                var bg       = dark ? C(0xD9, 0x09, 0x08, 0x11) : C(0xD9, 0xF2, 0xF3, 0xF7);
                 var fg       = dark ? C(255, 0xFF, 0xFF, 0xFF) : C(255, 0x15, 0x15, 0x2B); // 标题/按钮前景
                 var fgInact  = dark ? C(255, 0x96, 0x96, 0xAA) : C(255, 0x82, 0x82, 0x96); // 失焦前景
                 var hoverBg  = dark ? C(40, 0xFF, 0xFF, 0xFF) : C(40, 0x00, 0x00, 0x00);   // 悬停背景
                 var pressBg  = dark ? C(70, 0xFF, 0xFF, 0xFF) : C(70, 0x00, 0x00, 0x00);   // 按下背景
 
-                // 启用 Mica 时标题栏背景透明以透出磨砂；否则用与主界面一致的纯色
-                var barBg = _micaActive ? Microsoft.UI.Colors.Transparent : bg;
-
-                tb.BackgroundColor = barBg;
-                tb.InactiveBackgroundColor = barBg;
+                tb.BackgroundColor = bg;
+                tb.InactiveBackgroundColor = bg;
                 tb.ForegroundColor = fg;
                 tb.InactiveForegroundColor = fgInact;
 
-                tb.ButtonBackgroundColor = barBg;
-                tb.ButtonInactiveBackgroundColor = barBg;
+                tb.ButtonBackgroundColor = bg;
+                tb.ButtonInactiveBackgroundColor = bg;
                 tb.ButtonForegroundColor = fg;
                 tb.ButtonInactiveForegroundColor = fgInact;
                 tb.ButtonHoverForegroundColor = fg;
