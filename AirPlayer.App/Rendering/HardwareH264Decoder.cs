@@ -21,8 +21,12 @@ namespace AirPlayer.App.Rendering
         private static readonly Guid IID_IMFTransform = new Guid("BF94C121-5B05-4E6F-8000-BA598961414D");
         // MF_SA_D3D11_AWARE 属性 GUID（标识 MFT 支持 D3D11 硬件输出）
         private static readonly Guid MF_SA_D3D11_AWARE = new Guid("206B4FC8-FCEA-4594-8058-4A6BEBA6EBF6");
-        // MF_LOW_LATENCY 属性 GUID（低延迟模式，减少解码器内部缓冲）
+        // MF_LOW_LATENCY 属性 GUID（低延迟模式，减少解码器内部缓冲；与 CODECAPI_AVLowLatencyMode 同一 GUID）
         private static readonly Guid MF_LOW_LATENCY = new Guid("9C27891A-ED7A-40E1-88E8-B22727A024EE");
+        // ICodecAPI 接口 IID
+        private static readonly Guid IID_ICodecAPI = new Guid("901db4c7-31ce-41a2-85dc-8fa0bf41b8da");
+        // CODECAPI_AVDecNumWorkerThreads（解码工作线程数）
+        private static readonly Guid CODECAPI_AVDecNumWorkerThreads = new Guid("9561C3E8-EA9E-4435-9B1E-A93E691894D8");
 
         // ProcessOutput 特殊返回码
         private const int MF_E_TRANSFORM_NEED_MORE_INPUT = unchecked((int)0xC00D6D72);   // 需要更多输入
@@ -111,17 +115,22 @@ namespace AirPlayer.App.Rendering
             }
 
             // ── 设置低延迟模式 ──────────────────────────────────────────
+            // 注：MF_LOW_LATENCY 与 CODECAPI_AVLowLatencyMode 是同一个 GUID，设此属性即开启低延迟解码。
             try
             {
                 // Vortice 3.x: IMFTransform.Attributes 属性，设置用统一的 Set(Guid, uint)
                 using IMFAttributes attrs = _decoder.Attributes;
                 attrs.Set(MF_LOW_LATENCY, 1u); // 1 = 开启低延迟
-                DiagLog.Write("[HWD] 低延追模式已开启");
+                DiagLog.Write("[HWD] 低延迟模式已开启");
             }
             catch (Exception ex)
             {
                 DiagLog.Write($"[HWD] 低延迟设置失败（非致命）: {ex.Message}");
             }
+
+            // ── 多线程解码（CODECAPI_AVDecNumWorkerThreads，须经 ICodecAPI 设置）──
+            // 高码率/高帧率（如快速滑动的大帧）下并行解码更易跟上，减少积压与延迟。
+            TrySetDecoderWorkerThreads((uint)Math.Min(Environment.ProcessorCount, 4));
 
             // ── 配置输入类型 ─────────────────────────────────────────────
             var inType = MediaFactory.MFCreateMediaType();
@@ -523,6 +532,65 @@ namespace AirPlayer.App.Rendering
             finally
             {
                 Marshal.Release(unk); // 释放 QI 前的临时 IUnknown 引用
+            }
+        }
+
+        // SetValue 是 ICodecAPI 的第 7 个方法 → 虚表槽位 = IUnknown(3) + 6 = 9
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate int CodecApiSetValueDelegate(IntPtr thisPtr, IntPtr api, IntPtr value);
+
+        /// <summary>
+        /// 通过 ICodecAPI 设置解码工作线程数（CODECAPI_AVDecNumWorkerThreads）。
+        /// 该属性不在 MFT 属性上，必须 QI 到 ICodecAPI 调 SetValue。自包含 COM 互操作，失败不致命。
+        /// </summary>
+        private void TrySetDecoderWorkerThreads(uint count)
+        {
+            if (_decoder == null) return;
+            IntPtr codecApi = IntPtr.Zero;
+            try
+            {
+                Guid iid = IID_ICodecAPI;
+                int hr = Marshal.QueryInterface(_decoder.NativePointer, ref iid, out codecApi);
+                if (hr < 0 || codecApi == IntPtr.Zero)
+                {
+                    DiagLog.Write("[HWD] 解码器不支持 ICodecAPI，跳过多线程设置");
+                    return;
+                }
+
+                IntPtr pVar = Marshal.AllocHGlobal(24);  // PROPVARIANT（64 位下 24 字节）
+                IntPtr pGuid = Marshal.AllocHGlobal(16); // GUID
+                try
+                {
+                    // 清零并填 VT_UI4(=19) + ulVal
+                    Marshal.WriteInt64(pVar, 0, 0);
+                    Marshal.WriteInt64(pVar, 8, 0);
+                    Marshal.WriteInt64(pVar, 16, 0);
+                    Marshal.WriteInt16(pVar, 0, 19);            // VT_UI4
+                    Marshal.WriteInt32(pVar, 8, (int)count);    // ulVal
+
+                    Marshal.Copy(CODECAPI_AVDecNumWorkerThreads.ToByteArray(), 0, pGuid, 16);
+
+                    IntPtr vtbl = Marshal.ReadIntPtr(codecApi);
+                    IntPtr setValuePtr = Marshal.ReadIntPtr(vtbl, 9 * IntPtr.Size); // 第 9 槽 = SetValue
+                    var setValue = Marshal.GetDelegateForFunctionPointer<CodecApiSetValueDelegate>(setValuePtr);
+
+                    int shr = setValue(codecApi, pGuid, pVar);
+                    if (shr < 0) DiagLog.Write($"[HWD] 设置解码线程数失败: 0x{shr:X8}");
+                    else DiagLog.Write($"[HWD] 解码器工作线程数已设为 {count}");
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(pVar);
+                    Marshal.FreeHGlobal(pGuid);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[HWD] 设置解码线程数异常: {ex.Message}");
+            }
+            finally
+            {
+                if (codecApi != IntPtr.Zero) Marshal.Release(codecApi);
             }
         }
 

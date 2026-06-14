@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using AirPlayer.Protocol.Utils;
 using SharpGen.Runtime;
 using Vortice;
@@ -33,6 +34,10 @@ namespace AirPlayer.App.Rendering
         private ID3D11VideoProcessorOutputView? _cachedOutputView;
         private IntPtr _cachedBackBufferPtr;
 
+        // 输入视图缓存：解码器输出的是固定纹理数组（同一纹理、不同数组层），
+        // 按(纹理指针,数组层)缓存输入视图，避免每帧重建（每帧 CreateVideoProcessorInputView 是已知高 CPU 坑）。
+        private readonly Dictionary<(IntPtr Ptr, uint Slice), ID3D11VideoProcessorInputView> _inputViewCache = new();
+
         public Nv12VideoProcessor(GpuDevice gpu)
         {
             _gpu = gpu;
@@ -53,6 +58,9 @@ namespace AirPlayer.App.Rendering
             _cachedRtv?.Dispose();
             _cachedRtv = null;
             _cachedBackBufferPtr = 0;
+
+            // 枚举器重建后，旧输入视图失效，必须清空缓存
+            ClearInputViewCache();
 
             _srcWidth  = srcWidth;
             _srcHeight = srcHeight;
@@ -102,18 +110,23 @@ namespace AirPlayer.App.Rendering
                 return;
             }
 
-            var inputViewDesc = new VideoProcessorInputViewDescription
+            // 输入视图：优先取缓存，未命中才创建（解码器纹理数组稳定，缓存可跨帧复用）
+            var key = (nv12Texture.NativePointer, subresourceIndex);
+            if (!_inputViewCache.TryGetValue(key, out ID3D11VideoProcessorInputView? inputView))
             {
-                FourCC        = 0,
-                ViewDimension = VideoProcessorInputViewDimension.Texture2D,
-                Texture2D     = new Texture2DVideoProcessorInputView
+                var inputViewDesc = new VideoProcessorInputViewDescription
                 {
-                    MipSlice   = 0,
-                    ArraySlice = subresourceIndex
-                }
-            };
-            using ID3D11VideoProcessorInputView inputView =
-                _videoDevice!.CreateVideoProcessorInputView(nv12Texture, _enumerator, inputViewDesc);
+                    FourCC        = 0,
+                    ViewDimension = VideoProcessorInputViewDimension.Texture2D,
+                    Texture2D     = new Texture2DVideoProcessorInputView
+                    {
+                        MipSlice   = 0,
+                        ArraySlice = subresourceIndex
+                    }
+                };
+                inputView = _videoDevice!.CreateVideoProcessorInputView(nv12Texture, _enumerator, inputViewDesc);
+                _inputViewCache[key] = inputView; // 缓存，勿在此处 Dispose（由 ClearInputViewCache 统一释放）
+            }
 
             IntPtr bbPtr = backBuffer.NativePointer;
             if (_cachedOutputView == null || _cachedBackBufferPtr != bbPtr)
@@ -223,6 +236,7 @@ namespace AirPlayer.App.Rendering
 
         /// <summary>
         /// 释放缓存的输出视图和 RTV（ResizeBuffers 前必须调用，否则后台缓冲仍被引用）。
+        /// 注意：输入视图引用的是解码器纹理而非交换链，故此处不清，避免窗口缩放时丢失缓存。
         /// </summary>
         public void ReleaseCachedViews()
         {
@@ -233,8 +247,17 @@ namespace AirPlayer.App.Rendering
             _cachedBackBufferPtr = 0;
         }
 
+        /// <summary>释放并清空输入视图缓存（枚举器重建或销毁时调用）。</summary>
+        private void ClearInputViewCache()
+        {
+            foreach (var v in _inputViewCache.Values)
+                v.Dispose();
+            _inputViewCache.Clear();
+        }
+
         public void Dispose()
         {
+            ClearInputViewCache();
             _processor?.Dispose();
             _enumerator?.Dispose();
             _cachedOutputView?.Dispose();
