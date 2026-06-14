@@ -71,6 +71,7 @@ namespace AirPlayer.App
         private DispatcherTimer? _toastTimer;          // 瞬时提示自动消失定时器
         private int _lastPresentedForFps;              // 上次呈现帧计数（算 FPS）
         private bool _menuOpen;                         // 菜单是否打开（打开时不自动隐藏按钮）
+        private bool _titleThemeHooked;                 // 是否已订阅 ActualThemeChanged（避免重复订阅）
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -167,12 +168,15 @@ namespace AirPlayer.App
             // 应用界面主题：跟随系统 / 浅色 / 深色（设到根元素，立即生效）
             if (this.Content is FrameworkElement root)
             {
-                root.RequestedTheme = _settings.Theme switch
+                root.RequestedTheme = CurrentElementTheme();
+                // 跟随系统时，系统主题变化需同步标题栏颜色 → 订阅一次 ActualThemeChanged
+                if (!_titleThemeHooked)
                 {
-                    "Light" => Microsoft.UI.Xaml.ElementTheme.Light,
-                    "Dark"  => Microsoft.UI.Xaml.ElementTheme.Dark,
-                    _       => Microsoft.UI.Xaml.ElementTheme.Default, // 跟随系统
-                };
+                    root.ActualThemeChanged += (s, e) => ApplyTitleBarTheme(s.ActualTheme);
+                    _titleThemeHooked = true;
+                }
+                // 用解析后的实际主题（System 会解析成 Light/Dark）给标题栏上色
+                ApplyTitleBarTheme(root.ActualTheme);
             }
             
             HudPanel.Visibility = _settings.ShowHud ? Visibility.Visible : Visibility.Collapsed;
@@ -181,6 +185,52 @@ namespace AirPlayer.App
             HudText.FontSize = _settings.HudFontSize;
             HudText.Foreground = new SolidColorBrush(GetColorFromHex(_settings.HudTextColor));
             HudPanel.Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = _settings.HudBgOpacity };
+        }
+
+        /// <summary>把设置中的主题字符串映射为 ElementTheme（Default=跟随系统）。</summary>
+        private Microsoft.UI.Xaml.ElementTheme CurrentElementTheme() => _settings.Theme switch
+        {
+            "Light" => Microsoft.UI.Xaml.ElementTheme.Light,
+            "Dark"  => Microsoft.UI.Xaml.ElementTheme.Dark,
+            _       => Microsoft.UI.Xaml.ElementTheme.Default,
+        };
+
+        /// <summary>按实际主题给系统标题栏（背景/标题/三个按钮）上色，使窗口整体跟随主题。</summary>
+        private void ApplyTitleBarTheme(Microsoft.UI.Xaml.ElementTheme actual)
+        {
+            try
+            {
+                if (!Microsoft.UI.Windowing.AppWindowTitleBar.IsCustomizationSupported()) return; // 旧系统不支持则跟随系统
+                var tb = _appWindow?.TitleBar;
+                if (tb == null) return;
+
+                bool dark = actual == Microsoft.UI.Xaml.ElementTheme.Dark;
+                Windows.UI.Color C(byte a, byte r, byte g, byte b) => Windows.UI.Color.FromArgb(a, r, g, b);
+
+                var bg       = dark ? C(255, 0x09, 0x08, 0x11) : C(255, 0xF2, 0xF3, 0xF7); // 与主界面背景一致
+                var fg       = dark ? C(255, 0xFF, 0xFF, 0xFF) : C(255, 0x15, 0x15, 0x2B); // 标题/按钮前景
+                var fgInact  = dark ? C(255, 0x96, 0x96, 0xAA) : C(255, 0x82, 0x82, 0x96); // 失焦前景
+                var hoverBg  = dark ? C(40, 0xFF, 0xFF, 0xFF) : C(40, 0x00, 0x00, 0x00);   // 悬停背景
+                var pressBg  = dark ? C(70, 0xFF, 0xFF, 0xFF) : C(70, 0x00, 0x00, 0x00);   // 按下背景
+
+                tb.BackgroundColor = bg;
+                tb.InactiveBackgroundColor = bg;
+                tb.ForegroundColor = fg;
+                tb.InactiveForegroundColor = fgInact;
+
+                tb.ButtonBackgroundColor = bg;
+                tb.ButtonInactiveBackgroundColor = bg;
+                tb.ButtonForegroundColor = fg;
+                tb.ButtonInactiveForegroundColor = fgInact;
+                tb.ButtonHoverForegroundColor = fg;
+                tb.ButtonHoverBackgroundColor = hoverBg;
+                tb.ButtonPressedForegroundColor = fg;
+                tb.ButtonPressedBackgroundColor = pressBg;
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[UI] 标题栏主题上色失败（非致命）: {ex.Message}");
+            }
         }
 
         /// <summary>截图按钮：把当前帧保存为 PNG 到「图片\AirPlayer」。</summary>
@@ -633,7 +683,8 @@ namespace AirPlayer.App
                 PrimaryButtonText = "保存",
                 CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = Content.XamlRoot
+                XamlRoot = Content.XamlRoot,
+                RequestedTheme = CurrentElementTheme() // 浮层不在主网格子树内，需单独跟随主题
             };
 
             var result = await dlg.ShowAsync();
