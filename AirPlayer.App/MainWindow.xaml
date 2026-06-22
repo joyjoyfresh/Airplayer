@@ -178,6 +178,9 @@
                         <ToggleMenuFlyoutItem.Icon><FontIcon Glyph="&#xE9D9;"/></ToggleMenuFlyoutItem.Icon>
                     </ToggleMenuFlyoutItem>
                     <MenuFlyoutSeparator/>
+                    <MenuFlyoutItem Text="检查更新…" Click="CheckUpdateMenuItem_Click">
+                        <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE895;"/></MenuFlyoutItem.Icon>
+                    </MenuFlyoutItem>
                     <MenuFlyoutItem Text="更多设置…" Click="SettingsMenuItem_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE713;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>

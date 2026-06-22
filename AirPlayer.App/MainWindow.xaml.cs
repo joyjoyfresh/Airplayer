@@ -170,6 +170,19 @@ namespace AirPlayer.App
                 sb.Begin();
 
             StartReceiver(hostName);
+
+            // 启动时自动检查更新
+            if (_settings.AutoCheckUpdate)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(3000);
+                    DispatcherQueue.TryEnqueue(async () =>
+                    {
+                        await RunUpdateCheckAsync(manual: false);
+                    });
+                });
+            }
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -784,26 +797,47 @@ namespace AirPlayer.App
                 return new PivotItem { Header = header, Content = Scroll(sp) };
             }
 
-            var pivot = new Pivot { Width = 380, Height = 460 };
-            pivot.Items.Add(Tab("通用", nameContainer, closeBehaviorContainer, screenshotContainer));
-            pivot.Items.Add(Tab("视频", resolutionContainer, fpsContainer));
-            pivot.Items.Add(Tab("音频", audioContainer));
-            pivot.Items.Add(Tab("外观", themeContainer, hudSectionHeader, hudContainer));
-            pivot.Items.Add(Tab("快捷键", shortcutContainer));
-
-            var dlg = new ContentDialog
+            // 6.6 软件更新配置
+            var updateHeader = new TextBlock
             {
-                Title = "更多设置",
-                Content = pivot,
-                PrimaryButtonText = "保存",
-                CloseButtonText = "取消",
-                DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = Content.XamlRoot,
-                RequestedTheme = CurrentElementTheme() // 浮层不在主网格子树内，需单独跟随主题
+                Text = "软件更新",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 0)
             };
+            var autoUpdateSwitch = new ToggleSwitch
+            {
+                Header = "启动时自动检查更新",
+                IsOn = _settings.AutoCheckUpdate,
+                Margin = new Thickness(0, 4, 0, 4)
+            };
+            var versionText = new TextBlock
+            {
+                Text = $"当前版本: v{UpdateChecker.CurrentVersion}",
+                FontSize = 12,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var checkUpdateBtn = new Button
+            {
+                Content = "检查更新",
+                Margin = new Thickness(12, 0, 0, 0)
+            };
+            var checkUpdatePanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+            checkUpdatePanel.Children.Add(versionText);
+            checkUpdatePanel.Children.Add(checkUpdateBtn);
 
-            var result = await dlg.ShowAsync();
-            if (result == ContentDialogResult.Primary)
+            var updateContainer = new StackPanel { Spacing = 6 };
+            updateContainer.Children.Add(updateHeader);
+            updateContainer.Children.Add(autoUpdateSwitch);
+            updateContainer.Children.Add(checkUpdatePanel);
+
+            ContentDialog dlg = null!;
+
+            void SaveAllSettings()
             {
                 // 1. 保存并更新设备名称
                 var name = nameBox.Text?.Trim();
@@ -864,6 +898,9 @@ namespace AirPlayer.App
                 // 9. 保存关闭窗口行为（即时生效，下次关闭按此处理）
                 _settings.CloseToTray = closeBehaviorCombo.SelectedIndex == 0;
 
+                // 9.5 保存自动更新设置
+                _settings.AutoCheckUpdate = autoUpdateSwitch.IsOn;
+
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
                 _settings.Save();
@@ -897,6 +934,37 @@ namespace AirPlayer.App
                 {
                     ShowToast("设置已保存");
                 }
+            }
+
+            checkUpdateBtn.Click += async (s, args) =>
+            {
+                SaveAllSettings();
+                dlg.Hide();
+                await RunUpdateCheckAsync(manual: true);
+            };
+
+            var pivot = new Pivot { Width = 380, Height = 460 };
+            pivot.Items.Add(Tab("通用", nameContainer, closeBehaviorContainer, screenshotContainer, updateContainer));
+            pivot.Items.Add(Tab("视频", resolutionContainer, fpsContainer));
+            pivot.Items.Add(Tab("音频", audioContainer));
+            pivot.Items.Add(Tab("外观", themeContainer, hudSectionHeader, hudContainer));
+            pivot.Items.Add(Tab("快捷键", shortcutContainer));
+
+            dlg = new ContentDialog
+            {
+                Title = "更多设置",
+                Content = pivot,
+                PrimaryButtonText = "保存",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = Content.XamlRoot,
+                RequestedTheme = CurrentElementTheme() // 浮层不在主网格子树内，需单独跟随主题
+            };
+
+            var result = await dlg.ShowAsync();
+            if (result == ContentDialogResult.Primary)
+            {
+                SaveAllSettings();
             }
         }
 
@@ -1858,6 +1926,205 @@ namespace AirPlayer.App
                     SwapPanel.Height = MainGrid.ActualWidth;
                 }
             }
+        }
+
+        /// <summary>菜单「检查更新…」点击事件</summary>
+        private async void CheckUpdateMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            await RunUpdateCheckAsync(manual: true);
+        }
+
+        /// <summary>运行更新检查并展示 UI</summary>
+        private async Task RunUpdateCheckAsync(bool manual)
+        {
+            ContentDialog? loadingDlg = null;
+            if (manual)
+            {
+                var pr = new ProgressRing { IsActive = true, HorizontalAlignment = HorizontalAlignment.Center };
+                loadingDlg = new ContentDialog
+                {
+                    Title = "正在检查更新",
+                    Content = new StackPanel
+                    {
+                        Spacing = 15,
+                        Children = { new TextBlock { Text = "正在连接 GitHub 获取最新版本信息..." }, pr }
+                    },
+                    XamlRoot = Content.XamlRoot,
+                    RequestedTheme = CurrentElementTheme()
+                };
+                _ = loadingDlg.ShowAsync();
+            }
+
+            UpdateInfo? updateInfo = null;
+            bool success = false;
+            try
+            {
+                updateInfo = await UpdateChecker.CheckForUpdateAsync("joyjoyfresh", "Airplayer");
+                success = true;
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[UI] 检查更新异常: {ex.Message}");
+            }
+            finally
+            {
+                if (loadingDlg != null)
+                {
+                    loadingDlg.Hide();
+                }
+            }
+
+            if (!success)
+            {
+                if (manual)
+                {
+                    var failDlg = new ContentDialog
+                    {
+                        Title = "检查更新",
+                        Content = new TextBlock { Text = "检查更新失败，请检查网络连接或稍后重试。" },
+                        CloseButtonText = "确定",
+                        XamlRoot = Content.XamlRoot,
+                        RequestedTheme = CurrentElementTheme()
+                    };
+                    await failDlg.ShowAsync();
+                }
+                return;
+            }
+
+            if (updateInfo == null)
+            {
+                if (manual)
+                {
+                    var latestDlg = new ContentDialog
+                    {
+                        Title = "检查更新",
+                        Content = new TextBlock { Text = $"当前已是最新版本 (v{UpdateChecker.CurrentVersion})。" },
+                        CloseButtonText = "确定",
+                        XamlRoot = Content.XamlRoot,
+                        RequestedTheme = CurrentElementTheme()
+                    };
+                    await latestDlg.ShowAsync();
+                }
+                return;
+            }
+
+            // 如果是自动检查，并且该版本已被跳过，则不提示
+            if (!manual && _settings.SkippedVersion == updateInfo.VersionString)
+            {
+                DiagLog.Write($"[UI] 自动检查发现新版本 {updateInfo.VersionString}，但用户已选择跳过该版本");
+                return;
+            }
+
+            // 弹出发现更新对话框
+            var contentPanel = new StackPanel { Spacing = 10, Width = 320 };
+
+            var notesHeader = new TextBlock { Text = "更新日志:", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+            var notesScroll = new ScrollViewer
+            {
+                Height = 150,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = new TextBlock
+                {
+                    Text = updateInfo.ReleaseNotes,
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 12
+                }
+            };
+
+            var progressPanel = new StackPanel { Spacing = 6, Visibility = Visibility.Collapsed };
+            var progressBar = new ProgressBar { Minimum = 0, Maximum = 100, Value = 0, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var progressText = new TextBlock { Text = "正在准备下载...", FontSize = 11, Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray) };
+            progressPanel.Children.Add(progressText);
+            progressPanel.Children.Add(progressBar);
+
+            contentPanel.Children.Add(notesHeader);
+            contentPanel.Children.Add(notesScroll);
+            contentPanel.Children.Add(progressPanel);
+
+            var updateDlg = new ContentDialog
+            {
+                Title = $"发现新版本: {updateInfo.VersionString}",
+                Content = contentPanel,
+                PrimaryButtonText = "立即更新",
+                SecondaryButtonText = "跳过此版本",
+                CloseButtonText = "稍后提醒",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = Content.XamlRoot,
+                RequestedTheme = CurrentElementTheme()
+            };
+
+            CancellationTokenSource? downloadCts = null;
+
+            updateDlg.PrimaryButtonClick += async (sender, args) =>
+            {
+                args.Cancel = true;
+                updateDlg.IsPrimaryButtonEnabled = false;
+                updateDlg.IsSecondaryButtonEnabled = false;
+                updateDlg.CloseButtonText = "取消";
+                progressPanel.Visibility = Visibility.Visible;
+
+                downloadCts = new CancellationTokenSource();
+                string tempZip = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AirPlayer_{updateInfo.VersionString}.zip");
+
+                try
+                {
+                    var progressHandler = new Progress<double>(value =>
+                    {
+                        progressBar.Value = value;
+                        progressText.Text = $"正在下载... {value:F1}%";
+                    });
+
+                    await UpdateChecker.DownloadUpdateAsync(updateInfo.DownloadUrl, tempZip, progressHandler, downloadCts.Token);
+
+                    progressText.Text = "下载完成，正在进行替换覆盖并重启...";
+                    await Task.Delay(1000);
+
+                    UpdateChecker.ApplyUpdateAndRestart(tempZip);
+                }
+                catch (OperationCanceledException)
+                {
+                    DiagLog.Write("[UI] 用户取消了更新下载");
+                    progressPanel.Visibility = Visibility.Collapsed;
+                    updateDlg.IsPrimaryButtonEnabled = true;
+                    updateDlg.IsSecondaryButtonEnabled = true;
+                    updateDlg.CloseButtonText = "稍后提醒";
+                    if (System.IO.File.Exists(tempZip))
+                    {
+                        try { System.IO.File.Delete(tempZip); } catch { }
+                    }
+                    ShowToast("下载已取消");
+                }
+                catch (Exception ex)
+                {
+                    DiagLog.Write($"[UI] 下载更新失败: {ex.Message}");
+                    progressText.Text = "下载失败: " + ex.Message;
+                    updateDlg.IsPrimaryButtonEnabled = true;
+                    updateDlg.IsSecondaryButtonEnabled = true;
+                    updateDlg.CloseButtonText = "稍后提醒";
+                    if (System.IO.File.Exists(tempZip))
+                    {
+                        try { System.IO.File.Delete(tempZip); } catch { }
+                    }
+                    ShowToast("更新下载失败");
+                }
+            };
+
+            updateDlg.SecondaryButtonClick += (sender, args) =>
+            {
+                _settings.SkippedVersion = updateInfo.VersionString;
+                _settings.Save();
+                ShowToast($"已跳过 v{updateInfo.VersionString} 版本");
+            };
+
+            updateDlg.CloseButtonClick += (sender, args) =>
+            {
+                if (downloadCts != null && !downloadCts.IsCancellationRequested)
+                {
+                    downloadCts.Cancel();
+                }
+            };
+
+            await updateDlg.ShowAsync();
         }
 
         // ──────────────────────────────────────────────────────────────────

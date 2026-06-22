@@ -62,6 +62,12 @@ namespace AirPlayer.App
         /// <summary>关闭窗口行为：true=最小化到系统托盘后台常驻，false=直接退出</summary>
         public bool CloseToTray { get; set; } = true;
 
+        /// <summary>启动时自动检查更新</summary>
+        public bool AutoCheckUpdate { get; set; } = true;
+
+        /// <summary>跳过的更新版本号</summary>
+        public string? SkippedVersion { get; set; }
+
         /// <summary>
         /// 用户自定义快捷键：键=动作 id（如 "rotate"），值=组合键字符串（如 "Ctrl+Shift+S"、"R"，空串表示禁用）。
         /// 缺省项回退到代码内置默认值。详见 MainWindow 的 ShortcutDefs。
