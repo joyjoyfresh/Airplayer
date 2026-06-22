@@ -236,11 +236,22 @@ namespace AirPlayer.App.Rendering
 
             var reader = _frameChannel.Reader;
             var batch = new List<H264Data>(64); // 复用列表，避免每轮分配
+            bool referenceChainBroken = false; // 跟踪参考链是否因丢帧/解码失败而断裂
+
             while (_renderRunning)
             {
                 if (!reader.TryRead(out var first))
                 {
-                    Thread.Sleep(1); // 暂无数据，轻量等待
+                    try
+                    {
+                        // 挂起线程，直到通道有新数据或已关闭（免除 Thread.Sleep(1) 的精度抖动，微秒级唤醒且零 CPU 占用）
+                        if (!reader.WaitToReadAsync().AsTask().GetAwaiter().GetResult())
+                            break;
+                    }
+                    catch
+                    {
+                        break;
+                    }
                     continue;
                 }
 
@@ -252,8 +263,6 @@ namespace AirPlayer.App.Rendering
                     while (reader.TryRead(out var n)) batch.Add(n);
 
                     // ── 延迟控制（安全兜底）：仅当积压过多且批内存在 IDR 时，跳到最近 IDR ──
-                    // 镜像流通常只在开头发一个 IDR、之后全是 P 帧，故此处几乎不会触发；
-                    // 只有渲染长时间卡顿且恰好有新 IDR 时才跳，且只在 IDR（GOP 起点）处跳，不丢半截 GOP。
                     if (batch.Count > MaxBacklogFrames)
                     {
                         int lastIdr = batch.FindLastIndex(f => f.FrameType == 5);
@@ -263,23 +272,54 @@ namespace AirPlayer.App.Rendering
                             _skippedFrameCount += lastIdr;   // 整段陈旧 GOP 计入丢帧
                             batch.RemoveRange(0, lastIdr);   // 丢弃最近 IDR 之前的陈旧帧
                             DiagLog.Write($"[PRS] 追帧：积压 {original} 帧，跳到最近 IDR，丢弃 {lastIdr} 帧");
+                            
+                            // 丢帧时清空解码器内部未处理的脏数据
+                            _decoder?.Flush();
+                            referenceChainBroken = false;    // 既然起点是 IDR 关键帧，参考链将在此重建
                         }
-                        // 若积压里没有 IDR：全部按序解码（参考链完整，硬件解码很快追上）
                     }
 
-                    // ── 按序解码整批，绝不中途丢帧（参考链完整 → 不花屏）；仅最后一帧按节流呈现 ──
+                    // ── 按序解码整批，若参考链断开则直接丢弃 P 帧避免显示花屏 ──
                     for (int i = 0; i < batch.Count; i++)
                     {
+                        var frame = batch[i];
+                        bool isIdr = frame.FrameType == 5;
+
+                        if (referenceChainBroken)
+                        {
+                            if (!isIdr)
+                            {
+                                // 参考链损坏期间，丢弃所有非关键帧（P 帧），防止脏渲染
+                                _skippedFrameCount++;
+                                continue;
+                            }
+                            else
+                            {
+                                // 迎来新 IDR 帧，可以重建参考帧链了
+                                _decoder?.Flush();
+                                referenceChainBroken = false;
+                                DiagLog.Write("[PRS] 收到新 IDR 帧，参考链已从损坏状态中恢复");
+                            }
+                        }
+
                         bool present = (i == batch.Count - 1) && ShouldPresentNow();
-                        if (ProcessFrame(batch[i], present, out bool needMore))
+                        if (ProcessFrame(frame, present, out bool needMore))
+                        {
                             _decodedFrameCount++;
+                        }
                         else if (!needMore)
+                        {
                             _skippedFrameCount++; // 仅真实解码失败计丢帧；NEED_MORE 是流水线延迟（帧已接收），不计
+                            
+                            // 标记参考链断开，丢弃后续 P 帧以避免花屏
+                            referenceChainBroken = true;
+                            DiagLog.Write($"[PRS] 帧解码失败(Type={frame.FrameType})，参考链损坏，将丢弃后续 P 帧直至下一个 IDR");
+                        }
                     }
 
                     // 周期性诊断：每 120 帧输出一次解码/跳过统计
                     if (_decodedFrameCount == 1 || _decodedFrameCount % 120 == 0)
-                        DiagLog.Write($"[PRS] 解码统计: 成功={_decodedFrameCount} 跳过={_skippedFrameCount} 本批={batch.Count}");
+                        DiagLog.Write($"[PRS] 解码统计: 成功={_decodedFrameCount} 跳过={_skippedFrameCount} 本批={batch.Count} 链断开={referenceChainBroken}");
                 }
                 catch (Exception ex)
                 {

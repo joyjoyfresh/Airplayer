@@ -598,6 +598,22 @@ namespace AirPlayer.App.Rendering
         public bool IsStarted => _started;
 
         /// <summary>
+        /// 清空解码器缓冲区和内部状态，用于丢帧或参考链断开时重新同步。
+        /// </summary>
+        public void Flush()
+        {
+            if (!_started) return;
+            try
+            {
+                _decoder?.ProcessMessage(TMessageType.MessageCommandFlush, UIntPtr.Zero);
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[HWD] Flush 失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// 重置解码器状态，以便用新分辨率重新初始化。
         /// iOS 屏幕旋转时调用。
         /// </summary>
