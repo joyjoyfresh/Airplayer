@@ -27,6 +27,18 @@
 
 ---
 
+## 📸 界面预览
+
+<p align="center">
+  <img src="branding/_preview.png" alt="AirPlayer Preview" width="85%" style="border-radius: 8px; box-shadow: 0 4px 30px rgba(0,0,0,0.2);" />
+</p>
+
+<p align="center" style="font-size: 13px; color: #888;">
+  想要查看更多风格的 Logo 设计与应用预览？请访问 <a href="branding/">branding/</a> 目录。
+</p>
+
+---
+
 ## ✨ 核心特性
 
 - ⚡ **全 GPU 加速视频管线**：视频流（H.264）采用 Media Foundation 硬件解码，辅以 D3D11 Video Processor 进行色彩转换与缩放，通过 DXGI 翻转交换链呈现。低延迟、极低 CPU 占用，不支持硬解时自动回退软解。
@@ -45,30 +57,44 @@
 
 AirPlayer 内部由两个核心模块协同工作。以下是 iOS 设备投屏至 AirPlayer 的核心握手及音视频管线处理流程：
 
-```text
-┌────────────────────────────────────────────────────────┐
-│                  iOS / iPadOS 设备                     │
-│  (mDNS 发现广播 / RTSP 控制会话 / H.264 视频流 / AAC-ELD 音频流)  │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ▼
-┌────────────────────────────────────────────────────────┐
-│               AirPlayer.Protocol (.NET 8)              │
-│   - mDNS 接收器 (MdnsRecv) & RTSP 服务器 (RtspSvr)       │
-│   - 配对校验与 AES 解密                                   │
-└───────────────────────────┬────────────────────────────┘
-                            │
-                            ├──────────────────────────────┐
-                            ▼                              ▼
-              [ 视频流: H.264 Annex-B ]           [ 音频流: Encrypted AAC ]
-                            │                              │
-                            ▼                              ▼
-┌────────────────────────────────────────┐   ┌───────────────────────────┐
-│         AirPlayer.App (WinUI 3)        │   │  AirPlayer.App (WinUI 3)  │
-│  - Media Foundation (MFT) H.264 解码   │   │  - fdk-aac 动态链接库解码  │
-│  - D3D11 Video Processor 色彩转换&缩放 │   │  - waveOut 环形缓冲音频播放 │
-│  - DXGI Flip SwapChain 渲染呈现         │   │                           │
-└────────────────────────────────────────┘   └───────────────────────────┘
+```mermaid
+graph TD
+    subgraph iOS_Device ["iOS / iPadOS Device"]
+        MDNS[mDNS 广播发现]
+        RTSP[RTSP 控制会话]
+        V_Stream[H.264 视频流]
+        A_Stream[AAC-ELD 音频流]
+    end
+
+    subgraph AirPlayer_Protocol ["AirPlayer.Protocol (.NET 8)"]
+        MdnsRecv[mDNS 接收器]
+        RtspSvr[RTSP 服务器]
+        Crypto[配对校验 & AES 解密]
+        
+        MDNS -.-> MdnsRecv
+        RTSP <--> RtspSvr
+        V_Stream --> Crypto
+        A_Stream --> Crypto
+    end
+
+    subgraph AirPlayer_App ["AirPlayer.App (WinUI 3 / C#)"]
+        MFT[Media Foundation (MFT) 解码]
+        D3D11[D3D11 Video Processor <br/>色彩空间转换 & 缩放]
+        DXGI[DXGI Flip SwapChain 呈现]
+        FdkAac[fdk-aac 动态库解码]
+        WaveOut[waveOut 环形缓冲音频播放]
+        
+        Crypto -->|H.264 Annex-B| MFT
+        MFT -->|NV12 纹理| D3D11
+        D3D11 -->|BGRA 渲染呈现| DXGI
+        
+        Crypto -->|Encrypted AAC| FdkAac
+        FdkAac -->|PCM 16-bit 44.1kHz| WaveOut
+    end
+
+    style iOS_Device fill:#f5f7fa,stroke:#abb2bf,stroke-width:2px;
+    style AirPlayer_Protocol fill:#e6f4ea,stroke:#34a853,stroke-width:2px;
+    style AirPlayer_App fill:#e8f0fe,stroke:#4285f4,stroke-width:2px;
 ```
 
 ---
