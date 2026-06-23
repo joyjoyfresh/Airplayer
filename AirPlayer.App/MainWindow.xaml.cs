@@ -16,6 +16,7 @@ using AirPlayer.Protocol.Models.Audio;
 using AirPlayer.Protocol.Utils;
 using AirPlayer.App.Rendering;
 using System.Threading;
+using System.Runtime.InteropServices;
 
 namespace AirPlayer.App
 {
@@ -77,6 +78,10 @@ namespace AirPlayer.App
         private bool _forceExit;                          // true 时关闭窗口直接退出（不再隐藏到托盘）
         private bool _hiddenToTray;                       // 当前是否已隐藏到托盘
         private bool _isDialogShowing;                    // 当前是否有 ContentDialog 正在显示（WinUI 同一时刻只允许一个，并发会崩溃）
+
+        // ===== 全屏鼠标指针自动隐藏 =====
+        private DispatcherTimer? _cursorHideTimer;        // 全屏下鼠标静止 3s 后隐藏指针
+        private bool _cursorHidden;                         // 当前鼠标指针是否已隐藏
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -165,6 +170,10 @@ namespace AirPlayer.App
             _controlHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
             _controlHideTimer.Tick += ControlHideTimer_Tick;
             MainGrid.PointerMoved += MainGrid_PointerMoved;
+
+            // 全屏鼠标指针自动隐藏：静止 3s 后隐藏，移动或打开菜单/对话框时恢复
+            _cursorHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            _cursorHideTimer.Tick += CursorHideTimer_Tick;
 
             // 启动等待页脉动动画
             if (MainGrid.Resources.TryGetValue("PulseStoryboard", out object sbObj) && sbObj is Storyboard sb)
@@ -1013,7 +1022,13 @@ namespace AirPlayer.App
         }
 
         /// <summary>菜单打开/关闭：维护标志，避免菜单开着时控制按钮被自动隐藏。</summary>
-        private void MainMenuFlyout_Opened(object? sender, object e) => _menuOpen = true;
+        private void MainMenuFlyout_Opened(object? sender, object e)
+        {
+            _menuOpen = true;
+            // 菜单打开期间必须显示鼠标指针，便于操作
+            ShowCursor();
+            _cursorHideTimer?.Stop();
+        }
 
         private void MainMenuFlyout_Closed(object? sender, object e)
         {
@@ -1021,6 +1036,8 @@ namespace AirPlayer.App
             // 关闭后若在投屏，重新开始自动隐藏倒计时
             _controlHideTimer?.Stop();
             if (_isMirroringActive) _controlHideTimer?.Start();
+            // 关闭后若仍全屏，重新开始指针隐藏倒计时
+            if (_isFullScreen) _cursorHideTimer?.Start();
         }
 
         /// <summary>切换窗口置顶状态并同步 UI 和配置。</summary>
@@ -1078,12 +1095,21 @@ namespace AirPlayer.App
             HudText.Text = $"{s.Width}x{s.Height}   {_settings.PreferredFps}/{fps} fps\n解码 {s.Decoded}  丢帧 {s.Skipped}";
         }
 
-        /// <summary>鼠标移动：显示菜单按钮并重置自动隐藏计时（仅投屏时会隐藏）。</summary>
+        /// <summary>鼠标移动：显示菜单按钮并重置自动隐藏计时（仅投屏时会隐藏）。
+        /// 全屏时同时恢复鼠标指针并重置指针隐藏计时。</summary>
         private void MainGrid_PointerMoved(object sender, PointerRoutedEventArgs e)
         {
             MenuButton.Visibility = Visibility.Visible;
             _controlHideTimer?.Stop();
             if (_isMirroringActive) _controlHideTimer?.Start();
+
+            // 全屏下：移动即显示指针，并重置 3s 静止隐藏倒计时
+            if (_isFullScreen)
+            {
+                ShowCursor();
+                _cursorHideTimer?.Stop();
+                _cursorHideTimer?.Start();
+            }
         }
 
         /// <summary>3 秒无操作：投屏中且菜单未打开时隐藏菜单按钮。</summary>
@@ -1092,6 +1118,37 @@ namespace AirPlayer.App
             _controlHideTimer?.Stop();
             if (_menuOpen) return; // 菜单打开时不隐藏
             if (_isMirroringActive) MenuButton.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>全屏下 3 秒鼠标静止：菜单/对话框未打开时隐藏鼠标指针。</summary>
+        private void CursorHideTimer_Tick(object? sender, object e)
+        {
+            _cursorHideTimer?.Stop();
+            if (!_isFullScreen) return;            // 已退出全屏则不处理
+            if (_menuOpen || _isDialogShowing) return; // 菜单或对话框打开时保持显示
+            HideCursor();
+        }
+
+        // Win32 ShowCursor：通过线程级显示计数控制鼠标指针可见性（计数<0 时隐藏）。
+        // 仅在我们隐藏/恢复时各调用一次，保持计数平衡。桌面应用全屏隐藏指针的标准做法。
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool ShowCursor([MarshalAs(UnmanagedType.Bool)] bool bShow);
+
+        /// <summary>隐藏鼠标指针（调用一次 ShowCursor(false)，使线程显示计数减一）。</summary>
+        private void HideCursor()
+        {
+            if (_cursorHidden) return;
+            ShowCursor(false);
+            _cursorHidden = true;
+        }
+
+        /// <summary>恢复鼠标指针（调用一次 ShowCursor(true)，使线程显示计数加一）。</summary>
+        private void ShowCursor()
+        {
+            if (!_cursorHidden) return;
+            ShowCursor(true);
+            _cursorHidden = false;
         }
 
         /// <summary>刷新待机页信息卡：本机 IP 与当前网络名。</summary>
@@ -1271,6 +1328,8 @@ namespace AirPlayer.App
 
                 // 投屏结束：恢复菜单按钮常显，重置 HUD 计数
                 _controlHideTimer?.Stop();
+                _cursorHideTimer?.Stop();
+                ShowCursor();
                 MenuButton.Visibility = Visibility.Visible;
                 _lastPresentedForFps = 0;
 
@@ -1917,6 +1976,10 @@ namespace AirPlayer.App
                 _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
                 _isFullScreen = false;
 
+                // 退出全屏：停止指针隐藏计时并恢复鼠标指针
+                _cursorHideTimer?.Stop();
+                ShowCursor();
+
                 // 退出全屏后：窗口会自动恢复到进入全屏前的尺寸和位置（系统行为），
                 // 不再强制 Resize，保留用户调整的窗口大小。
                 // 恢复置顶设置（全屏切换可能重置 Presenter 属性）
@@ -1934,6 +1997,10 @@ namespace AirPlayer.App
                     SwapPanel.Width = MainGrid.ActualHeight;
                     SwapPanel.Height = MainGrid.ActualWidth;
                 }
+
+                // 进入全屏：启动鼠标指针 3s 静止自动隐藏
+                _cursorHideTimer?.Stop();
+                _cursorHideTimer?.Start();
             }
         }
 
@@ -1947,6 +2014,9 @@ namespace AirPlayer.App
                 return ContentDialogResult.None;
             }
             _isDialogShowing = true;
+            // 对话框打开期间保持鼠标指针可见，便于交互
+            ShowCursor();
+            _cursorHideTimer?.Stop();
             try
             {
                 return await dialog.ShowAsync();
@@ -1954,6 +2024,8 @@ namespace AirPlayer.App
             finally
             {
                 _isDialogShowing = false;
+                // 关闭后若仍全屏，重新开始指针隐藏倒计时
+                if (_isFullScreen) _cursorHideTimer?.Start();
             }
         }
 
