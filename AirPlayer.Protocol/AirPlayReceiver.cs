@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using AirPlayer.Protocol.Listeners;
 using AirPlayer.Protocol.Models;
 using AirPlayer.Protocol.Models.Audio;
+using AirPlayer.Protocol.Utils;
 using Makaretu.Dns;
 
 namespace AirPlayer.Protocol
@@ -32,7 +33,9 @@ namespace AirPlayer.Protocol
         private readonly ushort _airPlayPort;
         private readonly string _deviceId;
 
-        public AirPlayReceiver(string instance, int preferredWidth = 1920, int preferredHeight = 1080, int preferredFps = 60, ushort airTunesPort = 7020, ushort airPlayPort = 7021)
+        // 监听端口：避开 Windows Hyper-V/WSL2/Docker 的 TCP 保留端口段（曾用 7020/7021，落在保留段 7004-7103 内
+        // 导致 bind 抛 AccessDenied 被迫回退到随机端口，iOS mDNS 缓存指向旧端口而“看得到但连不上”）
+        public AirPlayReceiver(string instance, int preferredWidth = 1920, int preferredHeight = 1080, int preferredFps = 60, ushort airTunesPort = 8020, ushort airPlayPort = 8021)
         {
             _instance = instance ?? throw new ArgumentNullException(nameof(instance));
             _airTunesPort = airTunesPort;
@@ -149,6 +152,9 @@ namespace AirPlayer.Protocol
             sd.Advertise(airTunes);
             sd.Advertise(airPlay);
             _mdns.Start();
+
+            // 确认广播端口与实际监听端口一致（若不一致，iOS 会连到错误端口导致“看得到但连不上”）
+            DiagLog.Write($"[MDNS] 已广播 _airplay._tcp / _raop._tcp，端口={actualAirTunesPort}");
 
             return Task.CompletedTask;
         }

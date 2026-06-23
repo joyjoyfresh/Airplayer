@@ -1190,6 +1190,10 @@ namespace AirPlayer.App
         {
             _cts = new CancellationTokenSource();
 
+            // 必须在任何监听器启动前重定向控制台：把各监听器/库的 Console.WriteLine 接进诊断日志，
+            // 否则 WinUI 桌面应用无控制台窗口，握手与连接期的关键诊断全部丢失，无法排查"连不上"
+            DiagLog.RedirectConsole();
+
             _receiver = new AirPlayReceiver(
                 deviceName,
                 preferredWidth: _settings.PreferredResolution == 720 ? 1280 : 1920,
@@ -1212,7 +1216,8 @@ namespace AirPlayer.App
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"AirPlay 接收器启动异常: {ex}");
+                    // 启动异常接进诊断日志（原 Debug.WriteLine 在无调试器时不可见，会导致"连不上却无任何线索"）
+                    DiagLog.Write($"[RECV] AirPlay 接收器启动异常: {ex}");
                 }
             });
         }

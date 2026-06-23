@@ -414,8 +414,8 @@ namespace AirPlayer.Protocol.Listeners
                                                 new Dictionary<string, int>
                                                 {
                                                     { "type", 96 },
-                                                    { "controlPort", 7022 },
-                                                    { "dataPort", 7023 }
+                                                    { "controlPort", 8022 },
+                                                    { "dataPort", 8023 }
                                                 }
                                             }
                                         }
@@ -515,7 +515,7 @@ namespace AirPlayer.Protocol.Listeners
                             Console.WriteLine($"[DEBUG-SETUP] Creating new AudioListener: format={session.AudioFormat}, ct={session.AudioCompressionType}, spf={session.AudioSamplesPerFrame}, mirroring={session.MirroringSession}");
                             // Start 'AudioListener' (handle PCM/AAC/ALAC data received from iOS/macOS
                             bool isMirroring = session.MirroringSession.HasValue && session.MirroringSession.Value;
-                            var control = new AudioListener(_receiver, session.SessionId, 7022, 7023, _dumpConfig, isMirroring);
+                            var control = new AudioListener(_receiver, session.SessionId, 8022, 8023, _dumpConfig, isMirroring);
                             await control.StartAsync(cancellationToken).ConfigureAwait(false);
                             Console.WriteLine("[DEBUG-SETUP] AudioListener started successfully");
 

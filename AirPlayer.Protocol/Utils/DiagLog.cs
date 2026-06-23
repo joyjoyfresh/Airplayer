@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 
 namespace AirPlayer.Protocol.Utils
 {
@@ -71,6 +72,45 @@ namespace AirPlayer.Protocol.Utils
                 }
             }
             catch { /* 诊断日志失败不影响主流程 */ }
+        }
+
+        /// <summary>把标准输出重定向到 DiagLog（仅 Debug 生效）。
+        /// WinUI 桌面应用没有控制台窗口，各监听器里大量 Console.WriteLine 在正常运行时会全部丢失；
+        /// 必须在任何监听器启动前调用，使握手/连接期的诊断统一落到 airplay-video.log。</summary>
+        [Conditional("DEBUG")]
+        public static void RedirectConsole()
+        {
+            try { Console.SetOut(new DiagLogWriter()); }
+            catch { /* 重定向失败不影响主流程 */ }
+        }
+
+        /// <summary>把 Console.WriteLine 接到 DiagLog 的 TextWriter：整行即一条日志，空行与逐字符输出忽略。</summary>
+        private sealed class DiagLogWriter : TextWriter
+        {
+            public override Encoding Encoding => Encoding.UTF8; // 编码声明（实际落盘为 UTF-8 文本）
+
+            public override void WriteLine(string value)
+            {
+                if (!string.IsNullOrEmpty(value)) // Console.WriteLine 的整行即一条日志
+                    Write(value);
+            }
+
+            public override void Write(string value)
+            {
+                if (!string.IsNullOrEmpty(value)) // 兼容 Console.Write（无换行）的零散调用
+                    DiagLog.Write(value);
+            }
+
+            public override void Write(char value) { /* 逐字符输出忽略，避免噪声 */ }
+
+            public override void Write(char[] buffer, int index, int count)
+            {
+                var s = new string(buffer, index, count); // 缓冲区片段拼回字符串
+                if (!string.IsNullOrWhiteSpace(s))
+                    DiagLog.Write(s.TrimEnd('\r', '\n'));
+            }
+
+            public override void WriteLine() { /* 空行忽略 */ }
         }
     }
 }
