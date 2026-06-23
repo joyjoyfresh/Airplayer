@@ -946,8 +946,8 @@ namespace AirPlayer.App
 
             var pivot = new Pivot { Width = 380, Height = 460 };
             pivot.Items.Add(Tab("通用", nameContainer, closeBehaviorContainer, screenshotContainer, updateContainer));
-            pivot.Items.Add(Tab("视频", resolutionContainer, fpsContainer));
-            pivot.Items.Add(Tab("音频", audioContainer));
+            // 音视频合并为一个选项卡，内部以「视频设置」「音频设置」分组标题区分
+            pivot.Items.Add(Tab("音视频", resolutionContainer, fpsContainer, audioContainer));
             pivot.Items.Add(Tab("外观", themeContainer, hudSectionHeader, hudContainer));
             pivot.Items.Add(Tab("快捷键", shortcutContainer));
 
