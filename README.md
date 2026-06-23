@@ -30,7 +30,7 @@
 ## 📸 界面预览
 
 <p align="center">
-  <img src="branding/_preview.png" alt="AirPlayer Preview" width="85%" style="border-radius: 8px; box-shadow: 0 4px 30px rgba(0,0,0,0.2);" />
+  <img src="branding/theme.png" alt="AirPlayer Preview" width="85%" style="border-radius: 8px; box-shadow: 0 4px 30px rgba(0,0,0,0.2);" />
 </p>
 
 <p align="center" style="font-size: 13px; color: #888;">
@@ -50,52 +50,6 @@
   - 自定义音频输出设备选择
   - 窗口置顶、一键截图（可指定截图保存目录）
 - 📊 **实时 HUD 诊断**：内置实时性能监视看板，直观展示当前投屏分辨率、帧率、硬件解码状态以及丢帧情况。
-
----
-
-## 🛠️ 系统架构与数据流
-
-AirPlayer 内部由两个核心模块协同工作。以下是 iOS 设备投屏至 AirPlayer 的核心握手及音视频管线处理流程：
-
-```mermaid
-graph TD
-    subgraph iOS_Device ["iOS / iPadOS Device"]
-        MDNS[mDNS 广播发现]
-        RTSP[RTSP 控制会话]
-        V_Stream[H.264 视频流]
-        A_Stream[AAC-ELD 音频流]
-    end
-
-    subgraph AirPlayer_Protocol ["AirPlayer.Protocol (.NET 8)"]
-        MdnsRecv[mDNS 接收器]
-        RtspSvr[RTSP 服务器]
-        Crypto[配对校验 & AES 解密]
-        
-        MDNS -.-> MdnsRecv
-        RTSP <--> RtspSvr
-        V_Stream --> Crypto
-        A_Stream --> Crypto
-    end
-
-    subgraph AirPlayer_App ["AirPlayer.App (WinUI 3 / C#)"]
-        MFT[Media Foundation (MFT) 解码]
-        D3D11[D3D11 Video Processor <br/>色彩空间转换 & 缩放]
-        DXGI[DXGI Flip SwapChain 呈现]
-        FdkAac[fdk-aac 动态库解码]
-        WaveOut[waveOut 环形缓冲音频播放]
-        
-        Crypto -->|H.264 Annex-B| MFT
-        MFT -->|NV12 纹理| D3D11
-        D3D11 -->|BGRA 渲染呈现| DXGI
-        
-        Crypto -->|Encrypted AAC| FdkAac
-        FdkAac -->|PCM 16-bit 44.1kHz| WaveOut
-    end
-
-    style iOS_Device fill:#f5f7fa,stroke:#abb2bf,stroke-width:2px;
-    style AirPlayer_Protocol fill:#e6f4ea,stroke:#34a853,stroke-width:2px;
-    style AirPlayer_App fill:#e8f0fe,stroke:#4285f4,stroke-width:2px;
-```
 
 ---
 
