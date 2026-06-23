@@ -76,6 +76,7 @@ namespace AirPlayer.App
         private TrayIcon? _tray;                          // 系统托盘图标
         private bool _forceExit;                          // true 时关闭窗口直接退出（不再隐藏到托盘）
         private bool _hiddenToTray;                       // 当前是否已隐藏到托盘
+        private bool _isDialogShowing;                    // 当前是否有 ContentDialog 正在显示（WinUI 同一时刻只允许一个，并发会崩溃）
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -986,7 +987,7 @@ namespace AirPlayer.App
                 RequestedTheme = CurrentElementTheme() // 浮层不在主网格子树内，需单独跟随主题
             };
 
-            var result = await dlg.ShowAsync();
+            var result = await ShowDialogAsync(dlg);
             if (result == ContentDialogResult.Primary)
             {
                 SaveAllSettings();
@@ -1961,6 +1962,26 @@ namespace AirPlayer.App
             }
         }
 
+        /// <summary>安全显示 ContentDialog：同一时刻仅允许一个对话框，若已有对话框在显示则放弃本次（避免 COMException 0x80000019 闪退）。</summary>
+        private async Task<ContentDialogResult> ShowDialogAsync(ContentDialog dialog)
+        {
+            if (_isDialogShowing)
+            {
+                // 已有对话框打开：直接关闭新对话框并返回 None，绝不并发 Show
+                try { dialog.Hide(); } catch { }
+                return ContentDialogResult.None;
+            }
+            _isDialogShowing = true;
+            try
+            {
+                return await dialog.ShowAsync();
+            }
+            finally
+            {
+                _isDialogShowing = false;
+            }
+        }
+
         /// <summary>菜单「检查更新…」点击事件</summary>
         private async void CheckUpdateMenuItem_Click(object sender, RoutedEventArgs e)
         {
@@ -1985,7 +2006,7 @@ namespace AirPlayer.App
                     XamlRoot = Content.XamlRoot,
                     RequestedTheme = CurrentElementTheme()
                 };
-                _ = loadingDlg.ShowAsync();
+                _ = ShowDialogAsync(loadingDlg);
             }
 
             UpdateInfo? updateInfo = null;
@@ -2035,7 +2056,7 @@ namespace AirPlayer.App
                         XamlRoot = Content.XamlRoot,
                         RequestedTheme = CurrentElementTheme()
                     };
-                    await failDlg.ShowAsync();
+                    await ShowDialogAsync(failDlg);
                 }
                 return;
             }
@@ -2052,7 +2073,7 @@ namespace AirPlayer.App
                         XamlRoot = Content.XamlRoot,
                         RequestedTheme = CurrentElementTheme()
                     };
-                    await latestDlg.ShowAsync();
+                    await ShowDialogAsync(latestDlg);
                 }
                 return;
             }
@@ -2173,7 +2194,7 @@ namespace AirPlayer.App
                 }
             };
 
-            await updateDlg.ShowAsync();
+            await ShowDialogAsync(updateDlg);
         }
 
         // ──────────────────────────────────────────────────────────────────
