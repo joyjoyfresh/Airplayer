@@ -2200,8 +2200,33 @@ namespace AirPlayer.App
                 progressPanel.Visibility = Visibility.Visible;
 
                 downloadCts = new CancellationTokenSource();
-                // 临时文件后缀随资产走：安装包 .exe（优先）或绿色包 .zip（降级）
-                string assetExt = updateInfo.DownloadUrl.EndsWith(".exe", System.StringComparison.OrdinalIgnoreCase) ? ".exe" : ".zip";
+                // 按当前安装方式选资产：安装版下 setup.exe，便携版下 win-x64.zip，升级后形态不变。
+                // 对应资产缺失时降级到另一类（安装版无 setup 则下 zip，便携版无 zip 则下 setup）。
+                bool installed = UpdateChecker.IsInstalledVersion;
+                string downloadUrl;
+                string assetExt;
+                if (installed)
+                {
+                    bool hasSetup = !string.IsNullOrEmpty(updateInfo.SetupUrl);
+                    downloadUrl = hasSetup ? updateInfo.SetupUrl : updateInfo.ZipUrl;
+                    assetExt = hasSetup ? ".exe" : ".zip";
+                }
+                else
+                {
+                    bool hasZip = !string.IsNullOrEmpty(updateInfo.ZipUrl);
+                    downloadUrl = hasZip ? updateInfo.ZipUrl : updateInfo.SetupUrl;
+                    assetExt = hasZip ? ".zip" : ".exe";
+                }
+
+                if (string.IsNullOrEmpty(downloadUrl))
+                {
+                    progressText.Text = "未找到可用的更新包。";
+                    updateDlg.IsPrimaryButtonEnabled = true;
+                    updateDlg.IsSecondaryButtonEnabled = true;
+                    updateDlg.CloseButtonText = "稍后提醒";
+                    return;
+                }
+
                 string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AirPlayer_{updateInfo.VersionString}{assetExt}");
 
                 try
@@ -2212,9 +2237,9 @@ namespace AirPlayer.App
                         progressText.Text = $"正在下载... {value:F1}%";
                     });
 
-                    await UpdateChecker.DownloadUpdateAsync(updateInfo.DownloadUrl, tempPath, progressHandler, downloadCts.Token);
+                    await UpdateChecker.DownloadUpdateAsync(downloadUrl, tempPath, progressHandler, downloadCts.Token);
 
-                    progressText.Text = "下载完成，正在启动安装程序…";
+                    progressText.Text = assetExt == ".exe" ? "下载完成，正在启动安装程序…" : "下载完成，正在应用更新…";
                     await Task.Delay(800);
 
                     UpdateChecker.ApplyUpdateAndRestart(tempPath);

@@ -61,3 +61,14 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName} now"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// Write an install marker so the app can tell an installed copy from a portable
+// (zip-extracted) copy, and pick the matching update asset (setup.exe vs zip).
+// Only the installer writes this; it is NOT shipped in the zip, so portable
+// installs never carry the marker. Written post-install so upgrades preserve it.
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    SaveStringToFile(ExpandConstant('{app}\installed.marker'), '1', False);
+end;
