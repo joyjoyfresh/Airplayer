@@ -2200,7 +2200,9 @@ namespace AirPlayer.App
                 progressPanel.Visibility = Visibility.Visible;
 
                 downloadCts = new CancellationTokenSource();
-                string tempZip = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AirPlayer_{updateInfo.VersionString}.zip");
+                // 临时文件后缀随资产走：安装包 .exe（优先）或绿色包 .zip（降级）
+                string assetExt = updateInfo.DownloadUrl.EndsWith(".exe", System.StringComparison.OrdinalIgnoreCase) ? ".exe" : ".zip";
+                string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"AirPlayer_{updateInfo.VersionString}{assetExt}");
 
                 try
                 {
@@ -2210,12 +2212,12 @@ namespace AirPlayer.App
                         progressText.Text = $"正在下载... {value:F1}%";
                     });
 
-                    await UpdateChecker.DownloadUpdateAsync(updateInfo.DownloadUrl, tempZip, progressHandler, downloadCts.Token);
+                    await UpdateChecker.DownloadUpdateAsync(updateInfo.DownloadUrl, tempPath, progressHandler, downloadCts.Token);
 
-                    progressText.Text = "下载完成，正在进行替换覆盖并重启...";
-                    await Task.Delay(1000);
+                    progressText.Text = "下载完成，正在启动安装程序…";
+                    await Task.Delay(800);
 
-                    UpdateChecker.ApplyUpdateAndRestart(tempZip);
+                    UpdateChecker.ApplyUpdateAndRestart(tempPath);
                 }
                 catch (OperationCanceledException)
                 {
@@ -2224,9 +2226,9 @@ namespace AirPlayer.App
                     updateDlg.IsPrimaryButtonEnabled = true;
                     updateDlg.IsSecondaryButtonEnabled = true;
                     updateDlg.CloseButtonText = "稍后提醒";
-                    if (System.IO.File.Exists(tempZip))
+                    if (System.IO.File.Exists(tempPath))
                     {
-                        try { System.IO.File.Delete(tempZip); } catch { }
+                        try { System.IO.File.Delete(tempPath); } catch { }
                     }
                     ShowToast("下载已取消");
                 }
@@ -2237,9 +2239,9 @@ namespace AirPlayer.App
                     updateDlg.IsPrimaryButtonEnabled = true;
                     updateDlg.IsSecondaryButtonEnabled = true;
                     updateDlg.CloseButtonText = "稍后提醒";
-                    if (System.IO.File.Exists(tempZip))
+                    if (System.IO.File.Exists(tempPath))
                     {
-                        try { System.IO.File.Delete(tempZip); } catch { }
+                        try { System.IO.File.Delete(tempPath); } catch { }
                     }
                     ShowToast("更新下载失败");
                 }

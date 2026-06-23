@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -168,25 +167,29 @@ namespace AirPlayer.App
 
                 if (root.TryGetProperty("assets", out var assetsProp) && assetsProp.ValueKind == JsonValueKind.Array)
                 {
-                    JsonElement bestAsset = default;
+                    // 资产选择优先级：
+                    //   1) 含 "setup" 的 .exe（Inno Setup 安装包，下载后静默安装升级，最可靠）
+                    //   2) 含 "win-x64" 的 .zip（绿色包，仅作降级，需手动解压覆盖）
+                    JsonElement setupAsset = default;
+                    JsonElement zipAsset = default;
                     foreach (var asset in assetsProp.EnumerateArray())
                     {
                         string name = asset.GetProperty("name").GetString() ?? "";
-                        if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                            name.Contains("setup", StringComparison.OrdinalIgnoreCase))
                         {
-                            // 优先匹配包含 win-x64 的压缩包，否则选择找到的第一个 zip
-                            if (name.Contains("win-x64", StringComparison.OrdinalIgnoreCase))
-                            {
-                                bestAsset = asset;
-                                break;
-                            }
-                            if (bestAsset.ValueKind == JsonValueKind.Undefined)
-                            {
-                                bestAsset = asset;
-                            }
+                            setupAsset = asset;
+                            break; // 找到安装包即定，无需继续
+                        }
+                        if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) &&
+                            name.Contains("win-x64", StringComparison.OrdinalIgnoreCase) &&
+                            zipAsset.ValueKind == JsonValueKind.Undefined)
+                        {
+                            zipAsset = asset;
                         }
                     }
 
+                    JsonElement bestAsset = setupAsset.ValueKind != JsonValueKind.Undefined ? setupAsset : zipAsset;
                     if (bestAsset.ValueKind != JsonValueKind.Undefined)
                     {
                         string downloadUrl = bestAsset.GetProperty("browser_download_url").GetString() ?? "";
@@ -202,7 +205,7 @@ namespace AirPlayer.App
                     }
                     else
                     {
-                        DiagLog.Write("[UPDATE] 未能在 Release 资产中找到 .zip 文件");
+                        DiagLog.Write("[UPDATE] 未能在 Release 资产中找到 setup.exe 或 win-x64.zip");
                     }
                 }
             }
@@ -238,50 +241,42 @@ namespace AirPlayer.App
             DiagLog.Write("[UPDATE] 更新包下载完成");
         }
 
-        /// <summary>解压并调用外部 PowerShell 脚本替换文件后重启应用</summary>
-        public static void ApplyUpdateAndRestart(string zipPath)
+        /// <summary>应用更新：若是安装包(.exe)则静待主进程退出后启动安装器；否则打开下载页让用户手动处理。</summary>
+        /// <remarks>安装器（Inno Setup）自带 UAC 提权、文件覆盖与安装后重启应用逻辑，
+        /// 比自行复制文件更可靠。下载的安装包放 %TEMP%，安装器自身处理安装与回滚。</remarks>
+        public static void ApplyUpdateAndRestart(string downloadedPath)
         {
             try
             {
-                string appDir = AppDomain.CurrentDomain.BaseDirectory;
-                string appExePath = Process.GetCurrentProcess().MainModule?.FileName ?? Path.Combine(appDir, "AirPlayer.App.exe");
-                int appPid = Process.GetCurrentProcess().Id;
+                bool isInstaller = downloadedPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
 
-                // 临时解压目录
-                string tempDir = Path.Combine(Path.GetTempPath(), "AirPlayer_Update");
-                if (Directory.Exists(tempDir))
+                if (!isInstaller)
                 {
-                    Directory.Delete(tempDir, true);
+                    // 仅绿色包（zip）而无安装包的降级情形：打开 Release 页让用户手动下载安装。
+                    DiagLog.Write($"[UPDATE] 下载的是非安装包 {downloadedPath}，打开下载页由用户手动安装");
+                    PsiOpen($"https://github.com/{RepoOwner}/{RepoName}/releases/latest");
+                    Environment.Exit(0);
+                    return;
                 }
-                Directory.CreateDirectory(tempDir);
 
-                DiagLog.Write($"[UPDATE] 正在解压更新包 {zipPath} 到 {tempDir}...");
-                ZipFile.ExtractToDirectory(zipPath, tempDir, true);
-
-                // 更新脚本与日志放在 %TEMP%（非解压目录），避免被自身清理动作删除
-                string scriptPath = Path.Combine(Path.GetTempPath(), "AirPlayer_apply_update.ps1");
+                int appPid = Process.GetCurrentProcess().Id;
+                string scriptPath = Path.Combine(Path.GetTempPath(), "AirPlayer_run_setup.ps1");
                 string logPath = Path.Combine(Path.GetTempPath(), "AirPlayer_update.log");
 
                 // PowerShell 单引号字符串中的单引号需写成 ''
                 string Esc(string? s) => (s ?? "").Replace("'", "''");
 
-                // 脚本落盘 .ps1，避免 -Command 方式下的引号转义地狱；全程写日志便于诊断失败原因
+                // 脚本：等待主进程退出（避免 exe 被占用导致安装器复制失败）→ 启动安装器（触发 UAC 提权）。
+                // 安装器走 Inno Setup 向导，安装完成后由 [Run] postinstall 自动重启应用。
                 const string PsTemplate = @"$log = '__LOG__'
-$appPid = __PID__
-$source = '__SOURCE__'
-$dest = '__DEST__'
-$exe = '__EXE__'
-$tempDir = '__TEMPDIR__'
+$procId = __PID__
+$setup = '__SETUP__'
 
 '=== AirPlayer update script started ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | Out-File -FilePath $log -Encoding UTF8
-'appPid  = ' + $appPid | Out-File -FilePath $log -Append -Encoding UTF8
-'source  = ' + $source | Out-File -FilePath $log -Append -Encoding UTF8
-'dest    = ' + $dest | Out-File -FilePath $log -Append -Encoding UTF8
-'exe     = ' + $exe | Out-File -FilePath $log -Append -Encoding UTF8
 
-# 1. 等待主进程退出
+# 1. 等待主进程退出，确保其 exe 不被占用
 try {
-  while (Get-Process -Id $appPid -ErrorAction SilentlyContinue) {
+  while (Get-Process -Id $procId -ErrorAction SilentlyContinue) {
     Start-Sleep -Milliseconds 200
   }
   'main process exited' | Out-File -FilePath $log -Append -Encoding UTF8
@@ -289,39 +284,22 @@ try {
   'wait pid error: ' + $_.Exception.Message | Out-File -FilePath $log -Append -Encoding UTF8
 }
 
-# 2. 覆盖复制新文件到主程序目录
+# 2. 启动安装器（PrivilegesRequired=admin 会触发 UAC 提权，向导式安装）
 try {
-  Copy-Item -Path $source -Destination $dest -Recurse -Force
-  'files copied' | Out-File -FilePath $log -Append -Encoding UTF8
+  Start-Process -FilePath $setup
+  'setup launched' | Out-File -FilePath $log -Append -Encoding UTF8
 } catch {
-  'copy error: ' + $_.Exception.Message | Out-File -FilePath $log -Append -Encoding UTF8
+  'launch error: ' + $_.Exception.Message | Out-File -FilePath $log -Append -Encoding UTF8
 }
-
-# 3. 重启主程序
-try {
-  Start-Process -FilePath $exe
-  'restarted' | Out-File -FilePath $log -Append -Encoding UTF8
-} catch {
-  'restart error: ' + $_.Exception.Message | Out-File -FilePath $log -Append -Encoding UTF8
-}
-
-# 4. 清理临时解压目录
-Start-Sleep -Seconds 1
-try {
-  Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-} catch {}
 ";
                 string psScript = PsTemplate
                     .Replace("__LOG__", Esc(logPath))
                     .Replace("__PID__", appPid.ToString())
-                    .Replace("__SOURCE__", Esc(Path.Combine(tempDir, "*")))
-                    .Replace("__DEST__", Esc(appDir))
-                    .Replace("__EXE__", Esc(appExePath))
-                    .Replace("__TEMPDIR__", Esc(tempDir));
+                    .Replace("__SETUP__", Esc(downloadedPath));
                 File.WriteAllText(scriptPath, psScript, System.Text.Encoding.UTF8);
 
                 DiagLog.Write($"[UPDATE] 更新脚本已写入 {scriptPath}，日志 {logPath}");
-                DiagLog.Write("[UPDATE] 正在启动外部更新脚本并退出主程序...");
+                DiagLog.Write($"[UPDATE] 即将退出主程序并启动安装器 {downloadedPath}");
                 var psi = new ProcessStartInfo
                 {
                     FileName = "powershell.exe",
@@ -330,18 +308,29 @@ try {
                     UseShellExecute = false,
                     WindowStyle = ProcessWindowStyle.Hidden
                 };
-
                 Process.Start(psi);
 
-                // 强制终止当前进程。Application.Current.Exit() 在 unpackaged WinUI3 下只关窗口未必终止进程
-                // （音频/RTSP 后台线程可能让进程存活），会导致 PowerShell 的「等待主进程退出」循环永远卡住，
-                // 替换与重启从不执行。Environment.Exit 强制终止进程，保证脚本循环能通过。
+                // 强制终止当前进程：unpackaged WinUI3 下 Application.Current.Exit() 只关窗口未必终止进程
+                // （音频/RTSP 后台线程可能存活），会让脚本的「等待主进程退出」循环卡死。Environment.Exit 保证退出。
                 Environment.Exit(0);
             }
             catch (Exception ex)
             {
                 DiagLog.Write($"[UPDATE] 应用更新失败: {ex.Message}");
                 throw;
+            }
+        }
+
+        /// <summary>用 Shell 打开 URL（浏览器/默认程序），UseShellExecute=true。</summary>
+        private static void PsiOpen(string url)
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[UPDATE] 打开 {url} 失败: {ex.Message}");
             }
         }
     }
