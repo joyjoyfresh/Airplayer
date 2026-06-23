@@ -245,6 +245,7 @@ namespace AirPlayer.App
             {
                 string appDir = AppDomain.CurrentDomain.BaseDirectory;
                 string appExePath = Process.GetCurrentProcess().MainModule?.FileName ?? Path.Combine(appDir, "AirPlayer.App.exe");
+                int appPid = Process.GetCurrentProcess().Id;
 
                 // 临时解压目录
                 string tempDir = Path.Combine(Path.GetTempPath(), "AirPlayer_Update");
@@ -257,29 +258,74 @@ namespace AirPlayer.App
                 DiagLog.Write($"[UPDATE] 正在解压更新包 {zipPath} 到 {tempDir}...");
                 ZipFile.ExtractToDirectory(zipPath, tempDir, true);
 
-                // 转义特殊字符（针对 PowerShell 单引号）
-                string escapedSource = Path.Combine(tempDir, "*").Replace("'", "''");
-                string escapedDest = appDir.Replace("'", "''");
-                string escapedExe = appExePath.Replace("'", "''");
-                string escapedTempDir = tempDir.Replace("'", "''");
+                // 更新脚本与日志放在 %TEMP%（非解压目录），避免被自身清理动作删除
+                string scriptPath = Path.Combine(Path.GetTempPath(), "AirPlayer_apply_update.ps1");
+                string logPath = Path.Combine(Path.GetTempPath(), "AirPlayer_update.log");
 
-                // 编写 PowerShell 脚本：
-                // 1. 等待当前进程退出
-                // 2. 覆盖复制所有新文件到主程序目录
-                // 3. 重新启动主程序
-                // 4. 清理临时解压目录
-                string psScript = 
-                    $"$pid = {Process.GetCurrentProcess().Id}; " +
-                    $"while (Get-Process -Id $pid -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 200 }}; " +
-                    $"Copy-Item -Path '{escapedSource}' -Destination '{escapedDest}' -Recurse -Force -ErrorAction SilentlyContinue; " +
-                    $"Start-Process -FilePath '{escapedExe}'; " +
-                    $"Remove-Item -Path '{escapedTempDir}' -Recurse -Force -ErrorAction SilentlyContinue";
+                // PowerShell 单引号字符串中的单引号需写成 ''
+                string Esc(string? s) => (s ?? "").Replace("'", "''");
 
+                // 脚本落盘 .ps1，避免 -Command 方式下的引号转义地狱；全程写日志便于诊断失败原因
+                const string PsTemplate = @"$log = '__LOG__'
+$appPid = __PID__
+$source = '__SOURCE__'
+$dest = '__DEST__'
+$exe = '__EXE__'
+$tempDir = '__TEMPDIR__'
+
+'=== AirPlayer update script started ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | Out-File -FilePath $log -Encoding UTF8
+'appPid  = ' + $appPid | Out-File -FilePath $log -Append -Encoding UTF8
+'source  = ' + $source | Out-File -FilePath $log -Append -Encoding UTF8
+'dest    = ' + $dest | Out-File -FilePath $log -Append -Encoding UTF8
+'exe     = ' + $exe | Out-File -FilePath $log -Append -Encoding UTF8
+
+# 1. 等待主进程退出
+try {
+  while (Get-Process -Id $appPid -ErrorAction SilentlyContinue) {
+    Start-Sleep -Milliseconds 200
+  }
+  'main process exited' | Out-File -FilePath $log -Append -Encoding UTF8
+} catch {
+  'wait pid error: ' + $_.Exception.Message | Out-File -FilePath $log -Append -Encoding UTF8
+}
+
+# 2. 覆盖复制新文件到主程序目录
+try {
+  Copy-Item -Path $source -Destination $dest -Recurse -Force
+  'files copied' | Out-File -FilePath $log -Append -Encoding UTF8
+} catch {
+  'copy error: ' + $_.Exception.Message | Out-File -FilePath $log -Append -Encoding UTF8
+}
+
+# 3. 重启主程序
+try {
+  Start-Process -FilePath $exe
+  'restarted' | Out-File -FilePath $log -Append -Encoding UTF8
+} catch {
+  'restart error: ' + $_.Exception.Message | Out-File -FilePath $log -Append -Encoding UTF8
+}
+
+# 4. 清理临时解压目录
+Start-Sleep -Seconds 1
+try {
+  Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+} catch {}
+";
+                string psScript = PsTemplate
+                    .Replace("__LOG__", Esc(logPath))
+                    .Replace("__PID__", appPid.ToString())
+                    .Replace("__SOURCE__", Esc(Path.Combine(tempDir, "*")))
+                    .Replace("__DEST__", Esc(appDir))
+                    .Replace("__EXE__", Esc(appExePath))
+                    .Replace("__TEMPDIR__", Esc(tempDir));
+                File.WriteAllText(scriptPath, psScript, System.Text.Encoding.UTF8);
+
+                DiagLog.Write($"[UPDATE] 更新脚本已写入 {scriptPath}，日志 {logPath}");
                 DiagLog.Write("[UPDATE] 正在启动外部更新脚本并退出主程序...");
                 var psi = new ProcessStartInfo
                 {
                     FileName = "powershell.exe",
-                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{psScript}\"",
+                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\"",
                     CreateNoWindow = true,
                     UseShellExecute = false,
                     WindowStyle = ProcessWindowStyle.Hidden
@@ -287,8 +333,10 @@ namespace AirPlayer.App
 
                 Process.Start(psi);
 
-                // 退出当前应用
-                Application.Current.Exit();
+                // 强制终止当前进程。Application.Current.Exit() 在 unpackaged WinUI3 下只关窗口未必终止进程
+                // （音频/RTSP 后台线程可能让进程存活），会导致 PowerShell 的「等待主进程退出」循环永远卡住，
+                // 替换与重启从不执行。Environment.Exit 强制终止进程，保证脚本循环能通过。
+                Environment.Exit(0);
             }
             catch (Exception ex)
             {
