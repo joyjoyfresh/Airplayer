@@ -4,6 +4,15 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.2] - 2026-06-23
+
+### 修复
+- 修复在线更新下载完成后软件关闭但未执行替换与重启的问题（由 WinUI3 非打包应用 `Application.Current.Exit()` 不终止进程导致，改用 `Environment.Exit(0)` 修复）。
+
+### 变更
+- 在线更新按安装方式分流：安装版下载 `setup.exe` 并启动安装程序静默升级；便携版下载 zip 解压覆盖后重启，各自升级到对应格式的新版本。
+- Inno Setup 安装后写入 `installed.marker` 标记文件，运行时以此区分安装版与便携版。
+
 ## [1.1.1] - 2026-06-23
 
 ### 新增
@@ -57,6 +66,7 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
+[1.1.2]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.2
 [1.1.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.1
 [1.1.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.0
 [1.0.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.0.0
