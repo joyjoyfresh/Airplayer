@@ -52,6 +52,7 @@ namespace AirPlayer.App
 
         private double _videoAspectRatio;
         private int _rotationDegrees; // 0 or 270 (toggle only)
+        private int _fullScreenEntryRotation; // 进入全屏时的旋转状态，退出时据此判断是否需重设窗口尺寸
         private H264Data? _pendingFirstFrame;         // 首帧 IDR 暂存，管线就绪后补投
 
         // ===== 投屏态窗口位置记忆（0° 和 270° 各一套，投屏结束后重置）=====
@@ -1985,11 +1986,22 @@ namespace AirPlayer.App
                 // 恢复置顶设置（全屏切换可能重置 Presenter 属性）
                 if (_appWindow.Presenter is OverlappedPresenter op)
                     op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+
+                // 退出全屏后系统恢复的是进入全屏前的窗口尺寸（对应进入时的旋转状态）。
+                // 若全屏期间旋转过，该尺寸与当前旋转状态不匹配（如进入竖屏、全屏中转横屏后退出，
+                // 窗口仍是竖屏），需重新应用当前旋转状态以同步窗口尺寸与面板。
+                if (_pipelineReady && _isMirroringActive && _rotationDegrees != _fullScreenEntryRotation)
+                {
+                    ApplyRotation();
+                }
             }
             else
             {
                 _appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
                 _isFullScreen = true;
+
+                // 记录进入全屏时的旋转状态，退出时若发生变化需重设窗口尺寸
+                _fullScreenEntryRotation = _rotationDegrees;
 
                 // 进入全屏时若处于旋转状态，重新按全屏可视区域设置面板尺寸
                 if (_pipelineReady && _rotationDegrees == 270)
