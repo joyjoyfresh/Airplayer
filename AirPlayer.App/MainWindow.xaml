@@ -155,7 +155,7 @@
                             Opening="MainMenuFlyout_Opening"
                             Opened="MainMenuFlyout_Opened"
                             Closed="MainMenuFlyout_Closed">
-                    <MenuFlyoutItem x:Name="FullScreenMenuItem" Text="切换全屏 (F11)" Click="FullScreenButton_Click">
+                    <MenuFlyoutItem x:Name="FullScreenMenuItem" Text="切换全屏 (Alt+Enter)" Click="FullScreenButton_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE740;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutItem x:Name="RotateMenuItem" Text="旋转画面 (R)" Click="RotateButton_Click">

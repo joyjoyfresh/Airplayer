@@ -142,7 +142,7 @@ namespace AirPlayer.App
             this.Title = "AirPlayer";
             this.Closed += MainWindow_Closed;
 
-            // 注册全局键盘快捷键（F11/Escape/R/H）
+            // 注册全局键盘快捷键（Alt+Enter/Escape/R/H）
             this.Content.KeyDown += MainWindow_KeyDown;
 
             // 监听主网格尺寸变化，用于旋转时同步面板尺寸
@@ -1726,7 +1726,7 @@ namespace AirPlayer.App
         /// <summary>所有可自定义动作（退出全屏固定为 Esc，不在此列）。</summary>
         private static readonly ShortcutDef[] ShortcutDefs = new[]
         {
-            new ShortcutDef { Id = "fullscreen", Name = "切换全屏",  Default = "F11" },
+            new ShortcutDef { Id = "fullscreen", Name = "切换全屏",  Default = "Alt+Enter" },
             new ShortcutDef { Id = "rotate",     Name = "旋转画面",  Default = "R" },
             new ShortcutDef { Id = "hud",        Name = "切换 HUD",  Default = "H" },
             new ShortcutDef { Id = "ontop",      Name = "窗口置顶",  Default = "T" },
@@ -1765,7 +1765,7 @@ namespace AirPlayer.App
             if (IsKeyDown(Windows.System.VirtualKey.Control)) sb.Append("Ctrl+");
             if (IsKeyDown(Windows.System.VirtualKey.Menu))    sb.Append("Alt+");
             if (IsKeyDown(Windows.System.VirtualKey.Shift))   sb.Append("Shift+");
-            sb.Append(key.ToString()); // 如 F、F11、S；与默认值书写一致
+            sb.Append(key.ToString()); // 如 F、Enter、S；与默认值书写一致
             return sb.ToString();
         }
 
