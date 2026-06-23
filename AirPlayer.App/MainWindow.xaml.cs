@@ -1000,6 +1000,9 @@ namespace AirPlayer.App
             var fillVisibility = (_isMirroringActive && _isFullScreen) ? Visibility.Visible : Visibility.Collapsed;
             FillScreenMenuItem.Visibility = fillVisibility;
             FillScreenMenuItem.IsChecked  = _settings.FillScreen;
+
+            // 检查更新仅主界面（未投屏）显示，投屏播放时隐藏，避免打断投屏体验
+            CheckUpdateMenuItem.Visibility = _isMirroringActive ? Visibility.Collapsed : Visibility.Visible;
         }
 
         /// <summary>菜单「退出投屏」按钮点击事件。</summary>
@@ -1931,6 +1934,12 @@ namespace AirPlayer.App
                     SwapPanel.Height = MainGrid.ActualWidth;
                 }
             }
+        }
+
+        /// <summary>菜单「检查更新…」点击事件</summary>
+        private async void CheckUpdateMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            await RunUpdateCheckAsync(manual: true);
         }
 
         /// <summary>运行更新检查并展示 UI</summary>
