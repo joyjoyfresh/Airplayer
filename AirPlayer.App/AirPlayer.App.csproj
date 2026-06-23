@@ -15,10 +15,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
 
-    <!-- 版本与产品信息（0.x 为预发布版本，功能仍在完善中） -->
-    <Version>0.2.0</Version>
-    <AssemblyVersion>0.2.0.0</AssemblyVersion>
-    <FileVersion>0.2.0.0</FileVersion>
+    <!-- 版本与产品信息（与 git tag 保持一致，检查更新据此与 GitHub Release 比较版本） -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
     <Product>AirPlayer</Product>
     <Authors>AirPlayer</Authors>
     <Description>Windows AirPlay/AirTunes 接收端：接收 iPhone/iPad 的屏幕镜像投屏（H.264 硬解 + AAC-ELD 音频），音画同步播放。</Description>
