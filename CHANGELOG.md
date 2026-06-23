@@ -4,6 +4,17 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1] - 2026-06-23
+
+### 新增
+- 全屏投屏时鼠标静止 3 秒自动隐藏指针，移动鼠标或打开菜单/对话框时自动恢复。
+
+### 变更
+- 全屏默认快捷键由 F11 改为单键 G。
+
+### 修复
+- 修复全屏中旋转画面后退出全屏，窗口未同步为当前旋转方向（仍停留在进入全屏前的方向）的问题。
+
 ## [1.1.0] - 2026-06-23
 
 ### 新增
@@ -46,5 +57,6 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
+[1.1.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.1
 [1.1.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.0
 [1.0.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.0.0
