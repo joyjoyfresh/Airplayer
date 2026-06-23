@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -20,16 +22,62 @@ namespace AirPlayer.App
         long AssetSize
     );
 
+    /// <summary>检查更新失败的分类原因，供 UI 给出针对性提示</summary>
+    public enum UpdateCheckFailureReason
+    {
+        /// <summary>仓库尚无任何已发布的 Release（仅有 tag 不行，需在 GitHub 上创建 Release）</summary>
+        NoRelease,
+        /// <summary>GitHub API 速率限制（匿名 60 次/小时），需稍后重试或配置 Token</summary>
+        RateLimited,
+        /// <summary>网络错误 / 无法连接 GitHub</summary>
+        Network,
+        /// <summary>其它未知错误</summary>
+        Unknown
+    }
+
+    /// <summary>检查更新异常，携带分类原因与人类可读信息</summary>
+    public class UpdateCheckException : Exception
+    {
+        public UpdateCheckFailureReason Reason { get; }
+        public UpdateCheckException(UpdateCheckFailureReason reason, string message, Exception? inner = null)
+            : base(message, inner) { Reason = reason; }
+    }
+
     public static class UpdateChecker
     {
-        private static readonly HttpClient _httpClient;
+        // 仓库信息：joyjoyfresh/Airplayer，硬编码避免到处传参
+        public const string RepoOwner = "joyjoyfresh";
+        public const string RepoName = "Airplayer";
 
-        static UpdateChecker()
+        private static HttpClient? _httpClient;
+        private static string? _lastToken;
+
+        /// <summary>按当前 Token 构建或复用 HttpClient（Token 变化时重建，确保鉴权头同步）</summary>
+        private static HttpClient GetHttpClient(string? token)
         {
-            _httpClient = new HttpClient();
-            // GitHub API 要求设置 User-Agent
-            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AirPlayer-Updater", "1.0"));
-            _httpClient.Timeout = TimeSpan.FromSeconds(30);
+            if (_httpClient != null && _lastToken == token)
+                return _httpClient;
+
+            _httpClient?.Dispose();
+            var client = new HttpClient();
+            // GitHub API 强制要求 User-Agent，否则 403
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AirPlayer-Updater", "1.0"));
+            // 指定 API 版本与返回 JSON
+            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+            // 配置了 Token 则带认证（匿名 60 次/小时 → 认证 5000 次/小时）
+            if (!string.IsNullOrWhiteSpace(token))
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            client.Timeout = TimeSpan.FromSeconds(30);
+            _httpClient = client;
+            _lastToken = token;
+            return client;
+        }
+
+        /// <summary>读取可选的 GitHub Token：优先环境变量，其次设置项（不强制要求配置）</summary>
+        private static string? ResolveToken(string? settingsToken)
+        {
+            var env = Environment.GetEnvironmentVariable("AIRPLAYER_GITHUB_TOKEN");
+            return !string.IsNullOrWhiteSpace(env) ? env : settingsToken;
         }
 
         /// <summary>获取当前运行程序的版本号</summary>
@@ -45,20 +93,80 @@ namespace AirPlayer.App
         /// <summary>检查是否有更新</summary>
         /// <param name="repoOwner">仓库拥有者，例如 "joyjoyfresh"</param>
         /// <param name="repoName">仓库名称，例如 "Airplayer"</param>
-        public static async Task<UpdateInfo?> CheckForUpdateAsync(string repoOwner, string repoName)
+        /// <param name="token">可选 GitHub Token（留空则匿名，匿名 60 次/小时易触发限频）</param>
+        public static async Task<UpdateInfo?> CheckForUpdateAsync(string repoOwner, string repoName, string? token = null)
         {
+            string url = $"https://api.github.com/repos/{repoOwner}/{repoName}/releases/latest";
+            DiagLog.Write(token is null
+                ? $"[UPDATE] 正在向 {url} 检查更新（匿名模式，60 次/小时）..."
+                : $"[UPDATE] 正在向 {url} 检查更新（已配置 Token，5000 次/小时）...");
+
+            var client = GetHttpClient(token);
+
+            HttpResponseMessage response;
             try
             {
-                string url = $"https://api.github.com/repos/{repoOwner}/{repoName}/releases/latest";
-                DiagLog.Write($"[UPDATE] 正在向 {url} 检查更新...");
-                var response = await _httpClient.GetStringAsync(url);
-                using var doc = JsonDocument.Parse(response);
+                response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            }
+            catch (TaskCanceledException ex) when (!ex.CancellationToken.IsCancellationRequested)
+            {
+                // 超时（HttpClient.Timeout）会以 TaskCanceledException 抛出且未取消
+                DiagLog.Write($"[UPDATE] 请求超时: {ex.Message}");
+                throw new UpdateCheckException(UpdateCheckFailureReason.Network, "连接 GitHub 超时，请检查网络。", ex);
+            }
+            catch (HttpRequestException ex)
+            {
+                DiagLog.Write($"[UPDATE] 网络错误: {ex.Message}");
+                throw new UpdateCheckException(UpdateCheckFailureReason.Network, "无法连接 GitHub，请检查网络后重试。", ex);
+            }
+
+            using (response)
+            {
+                // 404 = 仓库存在但无 latest release（未发布过 Release）
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    DiagLog.Write("[UPDATE] 仓库尚无已发布的 Release（404），需先在 GitHub 创建 Release");
+                    throw new UpdateCheckException(UpdateCheckFailureReason.NoRelease,
+                        "尚未发布任何版本。请先在 GitHub 仓库为标签创建 Release。");
+                }
+
+                // 403 多为速率限制（rate limit exceeded）；偶见 IP 被封，统一提示稍后重试
+                if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    var reset = response.Headers.Contains("X-RateLimit-Reset")
+                        ? response.Headers.GetValues("X-RateLimit-Reset").FirstOrDefault()
+                        : null;
+                    DiagLog.Write($"[UPDATE] GitHub API 速率限制（403）{(reset != null ? $"，重置时间戳 {reset}" : "")}");
+                    throw new UpdateCheckException(UpdateCheckFailureReason.RateLimited,
+                        "GitHub 请求过于频繁已被限速，请稍后重试，或在设置中配置 GitHub Token 提升额度。");
+                }
+
+                // 其它非 2xx
+                if (!response.IsSuccessStatusCode)
+                {
+                    DiagLog.Write($"[UPDATE] GitHub 返回非成功状态码: {(int)response.StatusCode} {response.StatusCode}");
+                    throw new UpdateCheckException(UpdateCheckFailureReason.Unknown,
+                        $"GitHub 返回错误 {(int)response.StatusCode}，请稍后重试。");
+                }
+
+                string json;
+                try
+                {
+                    json = await response.Content.ReadAsStringAsync();
+                }
+                catch (Exception ex)
+                {
+                    DiagLog.Write($"[UPDATE] 读取响应失败: {ex.Message}");
+                    throw new UpdateCheckException(UpdateCheckFailureReason.Network, "读取 GitHub 响应失败。", ex);
+                }
+
+                using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
                 if (!root.TryGetProperty("tag_name", out var tagProp))
                 {
                     DiagLog.Write("[UPDATE] GitHub 响应未包含 tag_name 字段");
-                    return null;
+                    throw new UpdateCheckException(UpdateCheckFailureReason.Unknown, "GitHub 响应格式异常，未包含版本字段。");
                 }
 
                 string tag = tagProp.GetString() ?? "";
@@ -66,7 +174,7 @@ namespace AirPlayer.App
                 if (!Version.TryParse(cleanTag, out var latestVersion))
                 {
                     DiagLog.Write($"[UPDATE] 无法解析版本号: {tag}");
-                    return null;
+                    throw new UpdateCheckException(UpdateCheckFailureReason.Unknown, $"无法解析版本号：{tag}。");
                 }
 
                 DiagLog.Write($"[UPDATE] 最新版本: {latestVersion}, 当前版本: {CurrentVersion}");
@@ -117,19 +225,15 @@ namespace AirPlayer.App
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                DiagLog.Write($"[UPDATE] 检查更新失败: {ex.Message}");
-                throw;
-            }
             return null;
         }
 
         /// <summary>下载更新包，支持进度回报与取消</summary>
-        public static async Task DownloadUpdateAsync(string downloadUrl, string destinationPath, IProgress<double> progress, CancellationToken cancellationToken)
+        public static async Task DownloadUpdateAsync(string downloadUrl, string destinationPath, IProgress<double> progress, CancellationToken cancellationToken, string? token = null)
         {
             DiagLog.Write($"[UPDATE] 开始下载更新包: {downloadUrl} -> {destinationPath}");
-            using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            var client = GetHttpClient(token);
+            using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
 
             long totalBytes = response.Content.Headers.ContentLength ?? -1L;

@@ -65,6 +65,9 @@ namespace AirPlayer.App
         /// <summary>启动时自动检查更新</summary>
         public bool AutoCheckUpdate { get; set; } = true;
 
+        /// <summary>可选 GitHub Token（提升 API 限额 60→5000 次/小时）；为空则匿名检查</summary>
+        public string? GitHubToken { get; set; }
+
         /// <summary>跳过的更新版本号</summary>
         public string? SkippedVersion { get; set; }
 

@@ -830,10 +830,31 @@ namespace AirPlayer.App
             checkUpdatePanel.Children.Add(versionText);
             checkUpdatePanel.Children.Add(checkUpdateBtn);
 
+            // GitHub Token：可选，配置后 API 限额由 60 次/小时提升至 5000 次/小时，避免频繁检查被限速
+            var tokenBox = new PasswordBox
+            {
+                Header = "GitHub Token（可选，提升检查更新额度）",
+                PlaceholderText = "留空则匿名检查（60 次/小时）",
+                PasswordChar = "•",
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+            if (!string.IsNullOrEmpty(_settings.GitHubToken))
+                tokenBox.Password = _settings.GitHubToken;
+            var tokenHint = new TextBlock
+            {
+                Text = "在 GitHub「设置 → 开发者设置 → 个人访问令牌」生成，仅需 public_repo 读取权限。",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+
             var updateContainer = new StackPanel { Spacing = 6 };
             updateContainer.Children.Add(updateHeader);
             updateContainer.Children.Add(autoUpdateSwitch);
             updateContainer.Children.Add(checkUpdatePanel);
+            updateContainer.Children.Add(tokenBox);
+            updateContainer.Children.Add(tokenHint);
 
             ContentDialog dlg = null!;
 
@@ -900,6 +921,10 @@ namespace AirPlayer.App
 
                 // 9.5 保存自动更新设置
                 _settings.AutoCheckUpdate = autoUpdateSwitch.IsOn;
+
+                // 9.6 保存 GitHub Token（可选，提升检查更新 API 限额）
+                var tokenInput = tokenBox.Password?.Trim();
+                _settings.GitHubToken = string.IsNullOrEmpty(tokenInput) ? null : tokenInput;
 
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
@@ -1965,14 +1990,22 @@ namespace AirPlayer.App
 
             UpdateInfo? updateInfo = null;
             bool success = false;
+            UpdateCheckFailureReason failureReason = UpdateCheckFailureReason.Unknown;
             try
             {
-                updateInfo = await UpdateChecker.CheckForUpdateAsync("joyjoyfresh", "Airplayer");
+                updateInfo = await UpdateChecker.CheckForUpdateAsync(
+                    UpdateChecker.RepoOwner, UpdateChecker.RepoName, _settings.GitHubToken);
                 success = true;
+            }
+            catch (UpdateCheckException ex)
+            {
+                DiagLog.Write($"[UI] 检查更新失败({ex.Reason}): {ex.Message}");
+                failureReason = ex.Reason;
             }
             catch (Exception ex)
             {
                 DiagLog.Write($"[UI] 检查更新异常: {ex.Message}");
+                failureReason = UpdateCheckFailureReason.Unknown;
             }
             finally
             {
@@ -1986,10 +2019,18 @@ namespace AirPlayer.App
             {
                 if (manual)
                 {
+                    // 按失败原因给出针对性提示，而非笼统的"检查失败"
+                    string failText = failureReason switch
+                    {
+                        UpdateCheckFailureReason.NoRelease => "尚未发布任何版本。请先在 GitHub 仓库为标签创建 Release 后再检查更新。",
+                        UpdateCheckFailureReason.RateLimited => "GitHub 请求过于频繁被限速，请稍后重试，或在「更多设置」中配置 GitHub Token 提升额度。",
+                        UpdateCheckFailureReason.Network => "无法连接 GitHub，请检查网络连接后重试。",
+                        _ => "检查更新失败，请稍后重试。"
+                    };
                     var failDlg = new ContentDialog
                     {
                         Title = "检查更新",
-                        Content = new TextBlock { Text = "检查更新失败，请检查网络连接或稍后重试。" },
+                        Content = new TextBlock { Text = failText, TextWrapping = TextWrapping.Wrap },
                         CloseButtonText = "确定",
                         XamlRoot = Content.XamlRoot,
                         RequestedTheme = CurrentElementTheme()
@@ -2082,7 +2123,7 @@ namespace AirPlayer.App
                         progressText.Text = $"正在下载... {value:F1}%";
                     });
 
-                    await UpdateChecker.DownloadUpdateAsync(updateInfo.DownloadUrl, tempZip, progressHandler, downloadCts.Token);
+                    await UpdateChecker.DownloadUpdateAsync(updateInfo.DownloadUrl, tempZip, progressHandler, downloadCts.Token, _settings.GitHubToken);
 
                     progressText.Text = "下载完成，正在进行替换覆盖并重启...";
                     await Task.Delay(1000);
