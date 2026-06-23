@@ -1933,12 +1933,6 @@ namespace AirPlayer.App
             }
         }
 
-        /// <summary>菜单「检查更新…」点击事件</summary>
-        private async void CheckUpdateMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            await RunUpdateCheckAsync(manual: true);
-        }
-
         /// <summary>运行更新检查并展示 UI</summary>
         private async Task RunUpdateCheckAsync(bool manual)
         {
