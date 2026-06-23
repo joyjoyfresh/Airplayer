@@ -1967,6 +1967,7 @@ namespace AirPlayer.App
         private async Task RunUpdateCheckAsync(bool manual)
         {
             ContentDialog? loadingDlg = null;
+            Task<ContentDialogResult>? loadingTask = null;
             if (manual)
             {
                 var pr = new ProgressRing { IsActive = true, HorizontalAlignment = HorizontalAlignment.Center };
@@ -1981,7 +1982,9 @@ namespace AirPlayer.App
                     XamlRoot = Content.XamlRoot,
                     RequestedTheme = CurrentElementTheme()
                 };
-                _ = ShowDialogAsync(loadingDlg);
+                // loading 用普通 ShowAsync（不进互斥包装），它独占显示并在检查完成后由 Hide() 关闭；
+                // loadingTask 用于等待其真正关闭后再弹结果对话框，避免两个 ContentDialog 并发闪退或提示被吞
+                loadingTask = loadingDlg.ShowAsync().AsTask();
             }
 
             UpdateInfo? updateInfo = null;
@@ -2007,7 +2010,11 @@ namespace AirPlayer.App
             {
                 if (loadingDlg != null)
                 {
-                    loadingDlg.Hide();
+                    loadingDlg.Hide(); // 请求关闭 loading
+                    if (loadingTask != null)
+                    {
+                        try { await loadingTask; } catch { } // 等待 loading 真正关闭，之后才能安全弹下一个对话框
+                    }
                 }
             }
 
