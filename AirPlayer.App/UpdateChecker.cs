@@ -27,7 +27,7 @@ namespace AirPlayer.App
     {
         /// <summary>仓库尚无任何已发布的 Release（仅有 tag 不行，需在 GitHub 上创建 Release）</summary>
         NoRelease,
-        /// <summary>GitHub API 速率限制（匿名 60 次/小时），需稍后重试或配置 Token</summary>
+        /// <summary>GitHub API 速率限制（匿名 60 次/小时），需稍后重试</summary>
         RateLimited,
         /// <summary>网络错误 / 无法连接 GitHub</summary>
         Network,
@@ -49,35 +49,17 @@ namespace AirPlayer.App
         public const string RepoOwner = "joyjoyfresh";
         public const string RepoName = "Airplayer";
 
-        private static HttpClient? _httpClient;
-        private static string? _lastToken;
+        // 匿名访问 GitHub API：未鉴权，限额 60 次/小时（单人偶尔检查够用；超限会触发 403 并提示稍后重试）
+        private static readonly HttpClient _httpClient;
 
-        /// <summary>按当前 Token 构建或复用 HttpClient（Token 变化时重建，确保鉴权头同步）</summary>
-        private static HttpClient GetHttpClient(string? token)
+        static UpdateChecker()
         {
-            if (_httpClient != null && _lastToken == token)
-                return _httpClient;
-
-            _httpClient?.Dispose();
-            var client = new HttpClient();
+            _httpClient = new HttpClient();
             // GitHub API 强制要求 User-Agent，否则 403
-            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AirPlayer-Updater", "1.0"));
+            _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AirPlayer-Updater", "1.0"));
             // 指定 API 版本与返回 JSON
-            client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-            // 配置了 Token 则带认证（匿名 60 次/小时 → 认证 5000 次/小时）
-            if (!string.IsNullOrWhiteSpace(token))
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            client.Timeout = TimeSpan.FromSeconds(30);
-            _httpClient = client;
-            _lastToken = token;
-            return client;
-        }
-
-        /// <summary>读取可选的 GitHub Token：优先环境变量，其次设置项（不强制要求配置）</summary>
-        private static string? ResolveToken(string? settingsToken)
-        {
-            var env = Environment.GetEnvironmentVariable("AIRPLAYER_GITHUB_TOKEN");
-            return !string.IsNullOrWhiteSpace(env) ? env : settingsToken;
+            _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+            _httpClient.Timeout = TimeSpan.FromSeconds(30);
         }
 
         /// <summary>获取当前运行程序的版本号</summary>
@@ -93,20 +75,15 @@ namespace AirPlayer.App
         /// <summary>检查是否有更新</summary>
         /// <param name="repoOwner">仓库拥有者，例如 "joyjoyfresh"</param>
         /// <param name="repoName">仓库名称，例如 "Airplayer"</param>
-        /// <param name="token">可选 GitHub Token（留空则匿名，匿名 60 次/小时易触发限频）</param>
-        public static async Task<UpdateInfo?> CheckForUpdateAsync(string repoOwner, string repoName, string? token = null)
+        public static async Task<UpdateInfo?> CheckForUpdateAsync(string repoOwner, string repoName)
         {
             string url = $"https://api.github.com/repos/{repoOwner}/{repoName}/releases/latest";
-            DiagLog.Write(token is null
-                ? $"[UPDATE] 正在向 {url} 检查更新（匿名模式，60 次/小时）..."
-                : $"[UPDATE] 正在向 {url} 检查更新（已配置 Token，5000 次/小时）...");
-
-            var client = GetHttpClient(token);
+            DiagLog.Write($"[UPDATE] 正在向 {url} 检查更新...");
 
             HttpResponseMessage response;
             try
             {
-                response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
             }
             catch (TaskCanceledException ex) when (!ex.CancellationToken.IsCancellationRequested)
             {
@@ -138,7 +115,7 @@ namespace AirPlayer.App
                         : null;
                     DiagLog.Write($"[UPDATE] GitHub API 速率限制（403）{(reset != null ? $"，重置时间戳 {reset}" : "")}");
                     throw new UpdateCheckException(UpdateCheckFailureReason.RateLimited,
-                        "GitHub 请求过于频繁已被限速，请稍后重试，或在设置中配置 GitHub Token 提升额度。");
+                        "GitHub 请求过于频繁已被限速，请稍后重试。");
                 }
 
                 // 其它非 2xx
@@ -229,11 +206,10 @@ namespace AirPlayer.App
         }
 
         /// <summary>下载更新包，支持进度回报与取消</summary>
-        public static async Task DownloadUpdateAsync(string downloadUrl, string destinationPath, IProgress<double> progress, CancellationToken cancellationToken, string? token = null)
+        public static async Task DownloadUpdateAsync(string downloadUrl, string destinationPath, IProgress<double> progress, CancellationToken cancellationToken)
         {
             DiagLog.Write($"[UPDATE] 开始下载更新包: {downloadUrl} -> {destinationPath}");
-            var client = GetHttpClient(token);
-            using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
 
             long totalBytes = response.Content.Headers.ContentLength ?? -1L;
