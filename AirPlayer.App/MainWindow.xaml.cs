@@ -813,7 +813,7 @@ namespace AirPlayer.App
             };
             var versionText = new TextBlock
             {
-                Text = $"当前版本: v{UpdateChecker.CurrentVersion}",
+                Text = $"当前版本: v{UpdateChecker.CurrentVersionDisplay}",
                 FontSize = 12,
                 Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
                 VerticalAlignment = VerticalAlignment.Center
@@ -2050,7 +2050,7 @@ namespace AirPlayer.App
                     var latestDlg = new ContentDialog
                     {
                         Title = "检查更新",
-                        Content = new TextBlock { Text = $"当前已是最新版本 (v{UpdateChecker.CurrentVersion})。" },
+                        Content = new TextBlock { Text = $"当前已是最新版本 (v{UpdateChecker.CurrentVersionDisplay})。" },
                         CloseButtonText = "确定",
                         XamlRoot = Content.XamlRoot,
                         RequestedTheme = CurrentElementTheme()

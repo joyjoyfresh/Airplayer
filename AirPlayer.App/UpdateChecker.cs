@@ -62,15 +62,19 @@ namespace AirPlayer.App
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
         }
 
-        /// <summary>获取当前运行程序的版本号</summary>
+        /// <summary>当前运行程序的版本号（用于与 GitHub Release 的 tag 比较大小）</summary>
         public static Version CurrentVersion
         {
             get
             {
                 var ver = typeof(UpdateChecker).Assembly.GetName().Version;
-                return ver ?? new Version(0, 2, 0);
+                return ver ?? new Version(1, 0, 0);
             }
         }
+
+        /// <summary>用于界面显示的版本字符串：只取前三段（Major.Minor.Build），与 git tag「v1.0.0」三段对齐。
+        /// 程序集版本固定四段，第四段 Revision 始终为 0，显示时去掉避免出现「1.0.0.0」。</summary>
+        public static string CurrentVersionDisplay => $"{CurrentVersion.Major}.{CurrentVersion.Minor}.{CurrentVersion.Build}";
 
         /// <summary>检查是否有更新</summary>
         /// <param name="repoOwner">仓库拥有者，例如 "joyjoyfresh"</param>
@@ -154,7 +158,7 @@ namespace AirPlayer.App
                     throw new UpdateCheckException(UpdateCheckFailureReason.Unknown, $"无法解析版本号：{tag}。");
                 }
 
-                DiagLog.Write($"[UPDATE] 最新版本: {latestVersion}, 当前版本: {CurrentVersion}");
+                DiagLog.Write($"[UPDATE] 最新版本: {latestVersion}, 当前版本: {CurrentVersionDisplay}");
                 if (latestVersion <= CurrentVersion)
                 {
                     return null;
