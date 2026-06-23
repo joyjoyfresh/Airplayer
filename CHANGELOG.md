@@ -4,6 +4,20 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] - 2026-06-23
+
+### 新增
+- 手动检查更新：最新版、失败（网络/限频/无 Release）均弹出明确提示，不再静默吞掉结果。
+
+### 优化
+- 检查更新菜单在投屏界面自动隐藏，仅在待机主界面显示，避免操作误触。
+- 更多设置 > 视频 + 音频选项卡合并为「音视频」，布局更简洁。
+- 检查更新改用纯匿名 GitHub API，移除 GitHub Token 配置入口。
+
+### 修复
+- 修复手动检查更新时多个 ContentDialog 并发导致的程序闪退（COMException 0x80000019）。
+- 修复版本号显示多余第四段（1.0.0.0 → 1.0.0）。
+
 ## [1.0.0] - 2026-06-14
 
 首个正式版。Windows 上的 AirPlay 接收端，接收 iPhone/iPad 的屏幕镜像投屏，
@@ -32,4 +46,5 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
-[1.0.0]: https://github.com/<your-account>/Airplayer/releases/tag/v1.0.0
+[1.1.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.0
+[1.0.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.0.0
