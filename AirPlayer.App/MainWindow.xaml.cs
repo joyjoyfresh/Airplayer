@@ -1158,25 +1158,24 @@ namespace AirPlayer.App
             HideCursor();
         }
 
-        // Win32 ShowCursor：通过线程级显示计数控制鼠标指针可见性（计数<0 时隐藏）。
-        // 仅在我们隐藏/恢复时各调用一次，保持计数平衡。桌面应用全屏隐藏指针的标准做法。
-        [DllImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool ShowCursor([MarshalAs(UnmanagedType.Bool)] bool bShow);
+        // Win32 ShowCursor 返回操作后的显示计数（≥0 可见，<0 隐藏）。
+        // WinUI3 内部可能多次调用 ShowCursor(true)，需循环减到负数才能真正隐藏。
+        [DllImport("user32.dll")]
+        private static extern int ShowCursor([MarshalAs(UnmanagedType.Bool)] bool bShow);
 
-        /// <summary>隐藏鼠标指针（调用一次 ShowCursor(false)，使线程显示计数减一）。</summary>
+        /// <summary>隐藏鼠标指针：循环调用 ShowCursor(false) 直到计数 &lt; 0。</summary>
         private void HideCursor()
         {
             if (_cursorHidden) return;
-            ShowCursor(false);
+            while (ShowCursor(false) >= 0) { }
             _cursorHidden = true;
         }
 
-        /// <summary>恢复鼠标指针（调用一次 ShowCursor(true)，使线程显示计数加一）。</summary>
+        /// <summary>恢复鼠标指针：循环调用 ShowCursor(true) 直到计数 ≥ 0。</summary>
         private void ShowCursor()
         {
             if (!_cursorHidden) return;
-            ShowCursor(true);
+            while (ShowCursor(true) < 0) { }
             _cursorHidden = false;
         }
 
