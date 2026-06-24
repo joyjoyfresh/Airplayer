@@ -57,6 +57,8 @@ namespace AirPlayer.App
         private double _videoAspectRatio;
         private int _rotationDegrees; // 0 or 270 (toggle only)
         private int _fullScreenEntryRotation; // 进入全屏时的旋转状态，退出时据此判断是否需重设窗口尺寸
+        private int _maximizeEntryRotation;   // 进入最大化时的旋转状态，还原时据此判断是否需重设窗口尺寸
+        private OverlappedPresenterState _prevOverlappedState; // 上次记录的 OverlappedPresenter 状态，用于检测最大化/还原转换
         private H264Data? _pendingFirstFrame;         // 首帧 IDR 暂存，管线就绪后补投
 
         // ===== 投屏态窗口位置记忆（0° 和 270° 各一套，投屏结束后重置）=====
@@ -1530,7 +1532,8 @@ namespace AirPlayer.App
                 // 调整窗口大小以适配视频，然后居中
                 _appWindow?.Resize(new SizeInt32(winW, winH));
                 CenterWindowOnScreen();
-                _appWindow!.Changed += AppWindow_Changed;
+                _prevOverlappedState = (_appWindow!.Presenter as OverlappedPresenter)?.State ?? OverlappedPresenterState.Restored;
+                _appWindow.Changed += AppWindow_Changed;
 
                 DiagLog.Write($"[UI] 窗口调整 {winW}x{winH} (视频 {videoWidth}x{videoHeight})");
 
@@ -1622,7 +1625,23 @@ namespace AirPlayer.App
         /// </summary>
         private void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs args)
         {
-            // 不再锁定窗口比例——用户可自由缩放窗口，画面自动信箱/邮筒铺满
+            if (_appWindow?.Presenter is not OverlappedPresenter op) return;
+            var cur = op.State;
+            if (cur == _prevOverlappedState) return;
+            var prev = _prevOverlappedState;
+            _prevOverlappedState = cur;
+
+            if (cur == OverlappedPresenterState.Maximized)
+            {
+                // 进入最大化：记录当前旋转状态
+                _maximizeEntryRotation = _rotationDegrees;
+            }
+            else if (prev == OverlappedPresenterState.Maximized && _pipelineReady && _isMirroringActive
+                     && _rotationDegrees != _maximizeEntryRotation)
+            {
+                // 从最大化还原：若期间旋转过，窗口恢复的是最大化前的尺寸（与当前旋转不匹配），重新应用旋转
+                ApplyRotation();
+            }
         }
 
         // ──────────────────────────────────────────────────────────────────
