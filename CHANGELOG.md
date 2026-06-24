@@ -4,6 +4,17 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-06-24
+
+### 新增
+- 窗口模式下投屏窗口锁定视频比例：缩放窗口时实时维持视频宽高比，窗口恰好框住视频，无黑边无裁切（基于 Win32 拦截 `WM_SIZING`，旋转 270° 时比例自动互换）。
+- 窗口模式下菜单也显示「铺满屏幕」按钮，投屏中即可在窗口/全屏下切换铺满与信箱缩放模式。
+
+### 修复
+- 修复全屏下退出投屏后主界面窗口尺寸异常（变成视频/手机尺寸）且画面冻在最后一帧的问题（切换窗口前先用不透明覆盖层遮挡 swapchain 残留帧，避免显式解绑交换链导致的崩溃）。
+- 修复信箱模式未裁掉 H.264 解码纹理对齐 padding，与铺满模式比例基准不一致，切换时画面横向拉伸的问题。
+- 修复窗口最大化时点旋转导致窗口尺寸与比例乱跳的问题（最大化态下不再主动 Resize 并跳过窗口位置记忆）。
+
 ## [1.1.2] - 2026-06-23
 
 ### 修复
@@ -66,6 +77,7 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
+[1.2.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.2.0
 [1.1.2]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.2
 [1.1.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.1
 [1.1.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.0
