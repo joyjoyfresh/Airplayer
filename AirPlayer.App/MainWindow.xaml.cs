@@ -1636,10 +1636,14 @@ namespace AirPlayer.App
                 // 进入最大化：记录当前旋转状态
                 _maximizeEntryRotation = _rotationDegrees;
             }
-            else if (prev == OverlappedPresenterState.Maximized && _pipelineReady && _isMirroringActive
+            else if (prev == OverlappedPresenterState.Maximized && !_isFullScreen
+                     && _pipelineReady && _isMirroringActive
                      && _rotationDegrees != _maximizeEntryRotation)
             {
-                // 从最大化还原：若期间旋转过，窗口恢复的是最大化前的尺寸（与当前旋转不匹配），重新应用旋转
+                // 从最大化还原且非全屏：若期间旋转过，重新应用旋转以同步窗口尺寸。
+                // 必须排除 _isFullScreen：SetPresenter(Overlapped) 会同步触发此回调，
+                // 此时 _isFullScreen 仍为 true，若在 Presenter 过渡期修改 SwapPanel
+                // 尺寸会触发 DWM 重合成崩溃；全屏退出由 ToggleFullScreen 自行调用 ApplyRotation。
                 ApplyRotation();
             }
         }
