@@ -89,7 +89,8 @@ namespace AirPlayer.App
         // ===== 全屏鼠标指针自动隐藏 =====
         private DispatcherTimer? _cursorHideTimer;        // 全屏下鼠标静止 3s 后隐藏指针
         private bool _cursorHidden;                       // 当前鼠标指针是否已隐藏
-        private CursorSubclassProc? _cursorSubclassProc; // 防委托被 GC 回收
+        private CursorSubclassProc? _cursorSubclassProc; // 防委托被 GC 回收；需在首次使用前初始化
+        private bool _cursorSubclassInstalled;            // WM_SETCURSOR 子类当前是否已安装
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -101,9 +102,8 @@ namespace AirPlayer.App
             _hWnd = hWnd; // 供窗口比例锁定器使用
             WindowId windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
 
-            // 安装 WM_SETCURSOR 子类：拦截 WinUI3 每次鼠标消息后重置光标的行为
+            // 仅缓存委托，防 GC 回收；子类在进入全屏时动态安装，避免 Presenter 切换时 DefSubclassProc 访问失效的 WndProc 链
             _cursorSubclassProc = CursorSubclassWndProc;
-            SetWindowSubclass(hWnd, _cursorSubclassProc, (IntPtr)2, IntPtr.Zero); // ID=2，与 AspectLocker(ID=1) 分开
             _appWindow = AppWindow.GetFromWindowId(windowId);
 
             // 设置应用窗口的图标
@@ -1198,6 +1198,28 @@ namespace AirPlayer.App
             return DefSubclassProc(hWnd, uMsg, wParam, lParam);
         }
 
+        /// <summary>
+        /// 安装 WM_SETCURSOR 子类（仅在全屏投屏期间使用）。
+        /// 必须在 SetPresenter(FullScreen) 完成后调用，保证 WndProc 链稳定。
+        /// </summary>
+        private void InstallCursorSubclass()
+        {
+            if (_cursorSubclassInstalled || _cursorSubclassProc == null || _hWnd == IntPtr.Zero) return;
+            SetWindowSubclass(_hWnd, _cursorSubclassProc, (IntPtr)2, IntPtr.Zero);
+            _cursorSubclassInstalled = true;
+        }
+
+        /// <summary>
+        /// 卸载 WM_SETCURSOR 子类。
+        /// 必须在 SetPresenter(Overlapped) 之前调用，避免 Presenter 切换期间 DefSubclassProc 访问无效指针。
+        /// </summary>
+        private void RemoveCursorSubclass()
+        {
+            if (!_cursorSubclassInstalled || _cursorSubclassProc == null) return;
+            RemoveWindowSubclass(_hWnd, _cursorSubclassProc, (IntPtr)2);
+            _cursorSubclassInstalled = false;
+        }
+
         /// <summary>隐藏鼠标指针：设置标志并立即清除当前光标。</summary>
         private void HideCursor()
         {
@@ -1660,6 +1682,9 @@ namespace AirPlayer.App
         private void StopVideoPipeline()
         {
             SwapPanel.SizeChanged -= SwapPanel_SizeChanged;
+
+            // 在 SetPresenter(Overlapped) 之前卸载光标子类，防止 Presenter 切换期间 DefSubclassProc 崩溃
+            RemoveCursorSubclass();
 
             // 卸载窗口比例锁定（投屏结束，不再需要锁定视频比例）
             _aspectLocker?.Dispose();
@@ -2131,15 +2156,15 @@ namespace AirPlayer.App
 
             if (_isFullScreen)
             {
+                // 必须在 SetPresenter(Overlapped) 之前卸载子类，
+                // 避免 Presenter 切换期间消息派发时 DefSubclassProc 访问 WinUI3 内部已变动的 WndProc 链。
+                _cursorHideTimer?.Stop();
+                ShowCursor();
+                RemoveCursorSubclass();
+
                 _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
                 _isFullScreen = false;
 
-                // 退出全屏：停止指针隐藏计时并恢复鼠标指针
-                _cursorHideTimer?.Stop();
-                ShowCursor();
-
-                // 退出全屏后：窗口会自动恢复到进入全屏前的尺寸和位置（系统行为），
-                // 不再强制 Resize，保留用户调整的窗口大小。
                 // 恢复置顶设置（全屏切换可能重置 Presenter 属性）
                 if (_appWindow.Presenter is OverlappedPresenter op)
                     op.IsAlwaysOnTop = _settings.AlwaysOnTop;
@@ -2166,6 +2191,9 @@ namespace AirPlayer.App
                     SwapPanel.Width = MainGrid.ActualHeight;
                     SwapPanel.Height = MainGrid.ActualWidth;
                 }
+
+                // 进入全屏后安装 WM_SETCURSOR 子类，WndProc 链已稳定，可安全拦截光标消息
+                InstallCursorSubclass();
 
                 // 进入全屏：启动鼠标指针 3s 静止自动隐藏
                 _cursorHideTimer?.Stop();
@@ -2457,9 +2485,8 @@ namespace AirPlayer.App
             // 非全屏时保存窗口位置和大小
             SaveWindowPosition();
 
-            if (_cursorSubclassProc != null)
-                RemoveWindowSubclass(_hWnd, _cursorSubclassProc, (IntPtr)2); // 卸载 WM_SETCURSOR 子类
-            ShowCursor();          // 确保退出时光标可见
+            RemoveCursorSubclass(); // 卸载 WM_SETCURSOR 子类（若已安装）
+            ShowCursor();           // 确保退出时光标可见
             _cts?.Cancel();        // 停止 AirPlay 监听
             _receiver?.Dispose();  // 释放接收器
             StopVideoPipeline();   // 释放视频管线
