@@ -63,3 +63,7 @@ AirPlayer.App/native/*.dll
 # Release output
 publish/
 *.zip
+
+# AI Assistant / IDE folders
+.claude/
+scratch/
