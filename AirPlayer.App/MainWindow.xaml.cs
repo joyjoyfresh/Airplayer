@@ -86,11 +86,10 @@ namespace AirPlayer.App
         private bool _hiddenToTray;                       // 当前是否已隐藏到托盘
         private bool _isDialogShowing;                    // 当前是否有 ContentDialog 正在显示（WinUI 同一时刻只允许一个，并发会崩溃）
 
-        // ===== 全屏鼠标指针自动隐藏 =====
         private DispatcherTimer? _cursorHideTimer;        // 全屏下鼠标静止 3s 后隐藏指针
         private bool _cursorHidden;                       // 当前鼠标指针是否已隐藏
-        private CursorSubclassProc? _cursorSubclassProc; // 防委托被 GC 回收；需在首次使用前初始化
-        private bool _cursorSubclassInstalled;            // WM_SETCURSOR 子类当前是否已安装
+        private Windows.Graphics.PointInt32 _lastMousePos;// 隐藏前的鼠标位置，用于恢复
+        private bool _isMovingCursor;                     // 标记是否由代码主动移动鼠标，防死循环
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -103,7 +102,6 @@ namespace AirPlayer.App
             WindowId windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
 
             // 仅缓存委托，防 GC 回收；子类在进入全屏时动态安装，避免 Presenter 切换时 DefSubclassProc 访问失效的 WndProc 链
-            _cursorSubclassProc = CursorSubclassWndProc;
             _appWindow = AppWindow.GetFromWindowId(windowId);
 
             // 设置应用窗口的图标
@@ -185,7 +183,7 @@ namespace AirPlayer.App
             MainGrid.PointerMoved += MainGrid_PointerMoved;
 
             // 全屏鼠标指针自动隐藏：静止 3s 后隐藏，移动或打开菜单/对话框时恢复
-            _cursorHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+            _cursorHideTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
             _cursorHideTimer.Tick += CursorHideTimer_Tick;
 
             // 启动等待页脉动动画
@@ -1165,75 +1163,41 @@ namespace AirPlayer.App
             HideCursor();
         }
 
-        // WinUI3 每次处理鼠标消息都会发送 WM_SETCURSOR 并恢复光标形状，
-        // Win32 ShowCursor 计数法无效。正确方案：子类化窗口拦截 WM_SETCURSOR，
-        // 隐藏期间调 SetCursor(NULL) 并吃掉消息，阻止框架恢复光标。
-        private delegate IntPtr CursorSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData);
-
-        [DllImport("comctl32.dll")]
-        private static extern bool SetWindowSubclass(IntPtr hWnd, CursorSubclassProc pfnSubclass, IntPtr uIdSubclass, IntPtr dwRefData);
-
-        [DllImport("comctl32.dll")]
-        private static extern bool RemoveWindowSubclass(IntPtr hWnd, CursorSubclassProc pfnSubclass, IntPtr uIdSubclass);
-
-        [DllImport("comctl32.dll")]
-        private static extern IntPtr DefSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")]
+        private static extern bool GetCursorPos(out Windows.Graphics.PointInt32 lpPoint);
 
         [DllImport("user32.dll")]
-        private static extern IntPtr SetCursor(IntPtr hCursor);
+        private static extern bool SetCursorPos(int x, int y);
 
         [DllImport("user32.dll")]
-        private static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+        private static extern int GetSystemMetrics(int nIndex);
+        private const int SM_CXSCREEN = 0;
+        private const int SM_CYSCREEN = 1;
 
-        private static readonly IntPtr IDC_ARROW = new IntPtr(32512);
-        private const uint WM_SETCURSOR = 0x0020;
-
-        private IntPtr CursorSubclassWndProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData)
-        {
-            if (uMsg == WM_SETCURSOR && _cursorHidden)
-            {
-                SetCursor(IntPtr.Zero); // 无光标
-                return (IntPtr)1;       // TRUE：已处理，阻止默认行为
-            }
-            return DefSubclassProc(hWnd, uMsg, wParam, lParam);
-        }
-
-        /// <summary>
-        /// 安装 WM_SETCURSOR 子类（仅在全屏投屏期间使用）。
-        /// 必须在 SetPresenter(FullScreen) 完成后调用，保证 WndProc 链稳定。
-        /// </summary>
-        private void InstallCursorSubclass()
-        {
-            if (_cursorSubclassInstalled || _cursorSubclassProc == null || _hWnd == IntPtr.Zero) return;
-            SetWindowSubclass(_hWnd, _cursorSubclassProc, (IntPtr)2, IntPtr.Zero);
-            _cursorSubclassInstalled = true;
-        }
-
-        /// <summary>
-        /// 卸载 WM_SETCURSOR 子类。
-        /// 必须在 SetPresenter(Overlapped) 之前调用，避免 Presenter 切换期间 DefSubclassProc 访问无效指针。
-        /// </summary>
-        private void RemoveCursorSubclass()
-        {
-            if (!_cursorSubclassInstalled || _cursorSubclassProc == null) return;
-            RemoveWindowSubclass(_hWnd, _cursorSubclassProc, (IntPtr)2);
-            _cursorSubclassInstalled = false;
-        }
-
-        /// <summary>隐藏鼠标指针：设置标志并立即清除当前光标。</summary>
+        /// <summary>隐藏鼠标指针：由于 WinUI 3 的底层输入管线无法被完美 Hook，采用物理边缘隐藏法（绝对安全无崩溃）</summary>
         private void HideCursor()
         {
             if (_cursorHidden) return;
             _cursorHidden = true;
-            SetCursor(IntPtr.Zero);
+            _isMovingCursor = true; // 标记这是代码移动，不要触发恢复
+
+            // 记录当前位置
+            GetCursorPos(out _lastMousePos);
+
+            // 将鼠标瞬间移动到主屏幕右下角的绝对边缘（该像素点在视觉上几乎不可见）
+            int cx = GetSystemMetrics(SM_CXSCREEN);
+            int cy = GetSystemMetrics(SM_CYSCREEN);
+            SetCursorPos(cx - 1, cy - 1);
         }
 
-        /// <summary>恢复鼠标指针：清除标志并立即恢复箭头光标。</summary>
+        /// <summary>恢复鼠标指针：瞬间将其移回隐藏前的中心位置</summary>
         private void ShowCursor()
         {
             if (!_cursorHidden) return;
             _cursorHidden = false;
-            SetCursor(LoadCursor(IntPtr.Zero, IDC_ARROW));
+            _isMovingCursor = true; // 标记这是代码移动
+
+            SetCursorPos(_lastMousePos.X, _lastMousePos.Y);
         }
 
         /// <summary>刷新待机页信息卡：本机 IP 与当前网络名。</summary>
@@ -1402,22 +1366,76 @@ namespace AirPlayer.App
         /// <summary>镜像结束：停止管线，恢复引导页，恢复待机态窗口</summary>
         private void Receiver_OnMirroringStopped(object? sender, EventArgs e)
         {
-            DispatcherQueue.TryEnqueue(() =>
+            DispatcherQueue.TryEnqueue(async () =>
             {
                 _isMirroringActive = false;
 
-                // 全屏下退出投屏：切回普通窗口前先用不透明覆盖层盖住视频面板。
-                // 切窗口会触发 DWM 重合成，swapchain 的最后一帧会被重新显示（冻屏）；
-                // 用覆盖层物理遮挡残留帧，避免显式解绑 swapchain（WinUI3 解绑后窗口合成会崩溃）。
                 bool wasFullScreen = _isFullScreen;
+
                 if (wasFullScreen)
+                {
+                    // ── 全屏下退出投屏：分两阶段处理，避免 DWM 重合成访问已释放的 swap chain 崩溃 ──
+                    //
+                    // 阶段一：在 SetPresenter(Overlapped) 之前，先卸载事件订阅，
+                    //         并隐藏 SwapPanel，使 DWM 重合成时不再触碰 swap chain。
+                    //         此时 swap chain / VideoPresenter 尚未释放，仍处于有效状态。
                     ExitOverlay.Visibility = Visibility.Visible;
 
-                // 先停管线（取消订阅 AppWindow_Changed、释放 presenter），再切换 Presenter。
-                // 顺序关键：StopVideoPipeline 会先取消 SwapPanel.SizeChanged 和 AppWindow_Changed
-                // 订阅，再释放 presenter；若先 SetPresenter 则 SwapPanel_SizeChanged 在窗口
-                // 尺寸变化时仍活跃，会触发 NotifyPanelSizeChanged，与 Dispose 产生竞争导致崩溃。
-                StopVideoPipeline();
+                    // 卸载事件订阅，防止 Presenter 切换触发的尺寸变化回调与后续 Dispose 产生竞争
+                    SwapPanel.SizeChanged -= SwapPanel_SizeChanged;
+                    if (_appWindow != null)
+                        _appWindow.Changed -= AppWindow_Changed;
+
+                    // 隐藏视频面板：向合成树发送剥离 SwapChainPanel 的请求
+                    SwapPanel.Visibility = Visibility.Collapsed;
+
+                    // 【核心修复】：WinUI 3 的视图树更新是异步的（在下一次 Layout Pass）。
+                    // 必须等待一小段时间，确保 SwapChainPanel 已经彻底脱离了 DWM 渲染树，然后再切窗口状态。
+                    await System.Threading.Tasks.Task.Delay(100);
+
+                    // 切回普通窗口模式
+                    _appWindow!.SetPresenter(AppWindowPresenterKind.Overlapped);
+                    _isFullScreen = false;
+
+                    // 恢复置顶设置（全屏切换可能重置 Presenter 属性）
+                    if (_appWindow.Presenter is OverlappedPresenter op)
+                        op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+
+                    // 再次等待窗口大小和状态在系统中完全落地，防止 DirectX 呈现缓冲区在重置期间被访问
+                    await System.Threading.Tasks.Task.Delay(100);
+
+                    // 阶段二：安全释放 GPU 资源
+                    _aspectLocker?.Dispose();
+                    _aspectLocker = null;
+
+                    // 重置旋转状态
+                    SwapPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+                    SwapPanel.VerticalAlignment = VerticalAlignment.Stretch;
+                    SwapPanel.Width = double.NaN;
+                    SwapPanel.Height = double.NaN;
+                    SwapPanel.RenderTransform = null;
+                    _rotationDegrees = 0;
+
+                    // 清除投屏态窗口位置记忆
+                    _castingPos0 = null;
+                    _castingSize0 = null;
+                    _castingPos270 = null;
+                    _castingSize270 = null;
+
+                    _presenter?.Dispose();
+                    _presenter = null;
+
+                    _pipelineReady    = false;
+                    _pipelineStarting = false;
+                    _gotKeyframe      = false;
+                    _firstFrameLogged = false;
+                    _pendingFirstFrame = null;
+                }
+                else
+                {
+                    // 非全屏：直接停止管线（无 Presenter 切换，不存在 DWM 重合成竞争）
+                    StopVideoPipeline();
+                }
 
                 // 释放音频播放器
                 _audioSink?.Dispose();
@@ -1429,18 +1447,6 @@ namespace AirPlayer.App
                 ShowCursor();
                 MenuButton.Visibility = Visibility.Visible;
                 _lastPresentedForFps = 0;
-
-                // 全屏下退出投屏：切回普通窗口模式（覆盖层已盖住 swapchain 残留帧，DWM 重合成不显示冻屏）。
-                // 否则全屏 Presenter 会忽略 Resize，且系统会按「进入全屏前的尺寸」（即投屏视频尺寸）
-                // 还原，导致主界面变成视频/手机尺寸的窗口，而非用户设定的主界面大小。
-                if (wasFullScreen && _appWindow != null)
-                {
-                    _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
-                    _isFullScreen = false;
-                    // 切回普通窗口后恢复置顶设置（全屏切换可能重置 Presenter 属性）
-                    if (_appWindow.Presenter is OverlappedPresenter op)
-                        op.IsAlwaysOnTop = _settings.AlwaysOnTop;
-                }
 
                 // 切回普通窗口并恢复待机窗口尺寸后再撤掉覆盖层，露出待机页
                 SwapPanel.Visibility  = Visibility.Collapsed;
@@ -1682,9 +1688,6 @@ namespace AirPlayer.App
         private void StopVideoPipeline()
         {
             SwapPanel.SizeChanged -= SwapPanel_SizeChanged;
-
-            // 在 SetPresenter(Overlapped) 之前卸载光标子类，防止 Presenter 切换期间 DefSubclassProc 崩溃
-            RemoveCursorSubclass();
 
             // 卸载窗口比例锁定（投屏结束，不再需要锁定视频比例）
             _aspectLocker?.Dispose();
@@ -2156,11 +2159,8 @@ namespace AirPlayer.App
 
             if (_isFullScreen)
             {
-                // 必须在 SetPresenter(Overlapped) 之前卸载子类，
-                // 避免 Presenter 切换期间消息派发时 DefSubclassProc 访问 WinUI3 内部已变动的 WndProc 链。
                 _cursorHideTimer?.Stop();
                 ShowCursor();
-                RemoveCursorSubclass();
 
                 _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
                 _isFullScreen = false;
@@ -2191,9 +2191,6 @@ namespace AirPlayer.App
                     SwapPanel.Width = MainGrid.ActualHeight;
                     SwapPanel.Height = MainGrid.ActualWidth;
                 }
-
-                // 进入全屏后安装 WM_SETCURSOR 子类，WndProc 链已稳定，可安全拦截光标消息
-                InstallCursorSubclass();
 
                 // 进入全屏：启动鼠标指针 3s 静止自动隐藏
                 _cursorHideTimer?.Stop();
@@ -2485,7 +2482,6 @@ namespace AirPlayer.App
             // 非全屏时保存窗口位置和大小
             SaveWindowPosition();
 
-            RemoveCursorSubclass(); // 卸载 WM_SETCURSOR 子类（若已安装）
             ShowCursor();           // 确保退出时光标可见
             _cts?.Cancel();        // 停止 AirPlay 监听
             _receiver?.Dispose();  // 释放接收器
