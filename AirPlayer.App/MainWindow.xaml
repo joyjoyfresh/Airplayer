@@ -48,10 +48,10 @@
             <Ellipse x:Name="PulseGlow" Width="600" Height="600" Opacity="0.2" VerticalAlignment="Center" HorizontalAlignment="Center">
                 <Ellipse.Fill>
                     <RadialGradientBrush>
-                        <!-- 中心高亮紫色 -->
-                        <GradientStop Color="#7C4DFF" Offset="0"/>
+                        <!-- 中心高亮颜色 -->
+                        <GradientStop x:Name="PulseGlowCenter" Color="#7C4DFF" Offset="0"/>
                         <!-- 边缘完全透明 -->
-                        <GradientStop Color="#007C4DFF" Offset="1"/>
+                        <GradientStop x:Name="PulseGlowEdge" Color="#007C4DFF" Offset="1"/>
                     </RadialGradientBrush>
                 </Ellipse.Fill>
                 <!-- 动画中心原点缩放 -->

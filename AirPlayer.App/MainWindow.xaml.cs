@@ -253,6 +253,11 @@ namespace AirPlayer.App
             HudText.FontSize = _settings.HudFontSize;
             HudText.Foreground = new SolidColorBrush(GetColorFromHex(_settings.HudTextColor));
             HudPanel.Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = _settings.HudBgOpacity };
+
+            // 应用待机呼吸灯颜色
+            var glowColor = GetColorFromHex(_settings.PulseGlowColor);
+            PulseGlowCenter.Color = glowColor;
+            PulseGlowEdge.Color = Windows.UI.Color.FromArgb(0, glowColor.R, glowColor.G, glowColor.B);
         }
 
         /// <summary>把设置中的主题字符串映射为 ElementTheme（Default=跟随系统）。</summary>
@@ -987,11 +992,74 @@ namespace AirPlayer.App
                 await RunUpdateCheckAsync(manual: true);
             };
 
+            // 8. 待机界面呼吸灯颜色配置
+            var glowHeader = new TextBlock
+            {
+                Text = "待机界面呼吸灯",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+            
+            var glowColors = new[]
+            {
+                (Name: "赛博紫 (默认)", Hex: "#7C4DFF"),
+                (Name: "冰川蓝", Hex: "#00BFFF"),
+                (Name: "荧光绿", Hex: "#00E676"),
+                (Name: "晚霞红", Hex: "#FF5252")
+            };
+            var glowCombo = new ComboBox
+            {
+                Header = "呼吸灯颜色",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            foreach (var c in glowColors)
+            {
+                glowCombo.Items.Add(c.Name);
+            }
+            glowCombo.Items.Add("自定义...");
+
+            // 判断当前设置是否在预设中
+            int glowSelectedIndex = glowColors.Length; // 默认为"自定义"
+            for (int i = 0; i < glowColors.Length; i++)
+            {
+                if (glowColors[i].Hex.Equals(_settings.PulseGlowColor, StringComparison.OrdinalIgnoreCase))
+                {
+                    glowSelectedIndex = i;
+                    break;
+                }
+            }
+            glowCombo.SelectedIndex = glowSelectedIndex;
+
+            // 自定义颜色选择器按钮及 Flyout
+            var customColorBtn = new Button { Content = "选择自定义颜色", HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 6, 0, 0) };
+            var colorPicker = new Microsoft.UI.Xaml.Controls.ColorPicker 
+            { 
+                Color = GetColorFromHex(_settings.PulseGlowColor), 
+                IsAlphaEnabled = false,
+                IsMoreButtonVisible = false,
+                IsColorSliderVisible = true,
+                IsColorChannelTextInputVisible = true,
+                IsHexInputVisible = true
+            };
+            var pickerFlyout = new Flyout { Content = colorPicker };
+            customColorBtn.Flyout = pickerFlyout;
+            customColorBtn.Visibility = glowSelectedIndex == glowColors.Length ? Visibility.Visible : Visibility.Collapsed;
+
+            glowCombo.SelectionChanged += (s, args) =>
+            {
+                customColorBtn.Visibility = glowCombo.SelectedIndex == glowColors.Length ? Visibility.Visible : Visibility.Collapsed;
+            };
+
+            var glowContainer = new StackPanel { Spacing = 6 };
+            glowContainer.Children.Add(glowHeader);
+            glowContainer.Children.Add(glowCombo);
+            glowContainer.Children.Add(customColorBtn);
+
             var pivot = new Pivot { Width = 380, Height = 460 };
             pivot.Items.Add(Tab("通用", nameContainer, closeBehaviorContainer, screenshotContainer, updateContainer));
             // 音视频合并为一个选项卡，内部以「视频设置」「音频设置」分组标题区分
             pivot.Items.Add(Tab("音视频", resolutionContainer, fpsContainer, audioContainer));
-            pivot.Items.Add(Tab("外观", themeContainer, hudSectionHeader, hudContainer));
+            pivot.Items.Add(Tab("外观", themeContainer, glowContainer, hudSectionHeader, hudContainer));
             pivot.Items.Add(Tab("快捷键", shortcutContainer));
 
             dlg = new ContentDialog
@@ -1008,6 +1076,16 @@ namespace AirPlayer.App
             var result = await ShowDialogAsync(dlg);
             if (result == ContentDialogResult.Primary)
             {
+                // 保存呼吸灯颜色
+                if (glowCombo.SelectedIndex < glowColors.Length)
+                {
+                    _settings.PulseGlowColor = glowColors[glowCombo.SelectedIndex].Hex;
+                }
+                else
+                {
+                    _settings.PulseGlowColor = $"#{colorPicker.Color.R:X2}{colorPicker.Color.G:X2}{colorPicker.Color.B:X2}";
+                }
+
                 SaveAllSettings();
             }
         }

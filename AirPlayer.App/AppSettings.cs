@@ -59,6 +59,9 @@ namespace AirPlayer.App
         /// <summary>界面主题："System"=跟随系统，"Light"=浅色，"Dark"=深色</summary>
         public string Theme { get; set; } = "System";
 
+        /// <summary>待机页面呼吸灯颜色Hex</summary>
+        public string PulseGlowColor { get; set; } = "#7C4DFF";
+
         /// <summary>关闭窗口行为：true=最小化到系统托盘后台常驻，false=直接退出</summary>
         public bool CloseToTray { get; set; } = true;
 
