@@ -103,7 +103,7 @@ namespace AirPlayer.App
 
             // 安装 WM_SETCURSOR 子类：拦截 WinUI3 每次鼠标消息后重置光标的行为
             _cursorSubclassProc = CursorSubclassWndProc;
-            SetWindowSubclass(hWnd, _cursorSubclassProc, (IntPtr)1, IntPtr.Zero);
+            SetWindowSubclass(hWnd, _cursorSubclassProc, (IntPtr)2, IntPtr.Zero); // ID=2，与 AspectLocker(ID=1) 分开
             _appWindow = AppWindow.GetFromWindowId(windowId);
 
             // 设置应用窗口的图标
@@ -1384,24 +1384,17 @@ namespace AirPlayer.App
             {
                 _isMirroringActive = false;
 
-                // 全屏下退出投屏：顺序至关重要——必须先退出全屏再停管线。
-                // SetPresenter(Overlapped) 触发 DWM 重合成；若此时 swapchain 已被 StopVideoPipeline
-                // 释放，DWM 访问无效 swapchain 会崩溃。先退出全屏（swapchain 仍有效），
-                // DWM 重合成安全完成后，再停管线释放资源。
+                // 全屏下退出投屏：切回普通窗口前先用不透明覆盖层盖住视频面板。
+                // 切窗口会触发 DWM 重合成，swapchain 的最后一帧会被重新显示（冻屏）；
+                // 用覆盖层物理遮挡残留帧，避免显式解绑 swapchain（WinUI3 解绑后窗口合成会崩溃）。
                 bool wasFullScreen = _isFullScreen;
-                if (wasFullScreen && _appWindow != null)
-                {
-                    // 覆盖层遮住视频，用户看不到 swapchain 最后一帧
+                if (wasFullScreen)
                     ExitOverlay.Visibility = Visibility.Visible;
-                    // 退出全屏（swapchain 仍有效，DWM 重合成不崩溃）
-                    _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
-                    _isFullScreen = false;
-                    // 切回普通窗口后恢复置顶设置
-                    if (_appWindow.Presenter is OverlappedPresenter op)
-                        op.IsAlwaysOnTop = _settings.AlwaysOnTop;
-                }
 
-                // 窗口已处于普通模式，此时停管线/释放 swapchain 安全
+                // 先停管线（取消订阅 AppWindow_Changed、释放 presenter），再切换 Presenter。
+                // 顺序关键：StopVideoPipeline 会先取消 SwapPanel.SizeChanged 和 AppWindow_Changed
+                // 订阅，再释放 presenter；若先 SetPresenter 则 SwapPanel_SizeChanged 在窗口
+                // 尺寸变化时仍活跃，会触发 NotifyPanelSizeChanged，与 Dispose 产生竞争导致崩溃。
                 StopVideoPipeline();
 
                 // 释放音频播放器
@@ -1414,6 +1407,18 @@ namespace AirPlayer.App
                 ShowCursor();
                 MenuButton.Visibility = Visibility.Visible;
                 _lastPresentedForFps = 0;
+
+                // 全屏下退出投屏：切回普通窗口模式（覆盖层已盖住 swapchain 残留帧，DWM 重合成不显示冻屏）。
+                // 否则全屏 Presenter 会忽略 Resize，且系统会按「进入全屏前的尺寸」（即投屏视频尺寸）
+                // 还原，导致主界面变成视频/手机尺寸的窗口，而非用户设定的主界面大小。
+                if (wasFullScreen && _appWindow != null)
+                {
+                    _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+                    _isFullScreen = false;
+                    // 切回普通窗口后恢复置顶设置（全屏切换可能重置 Presenter 属性）
+                    if (_appWindow.Presenter is OverlappedPresenter op)
+                        op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+                }
 
                 // 切回普通窗口并恢复待机窗口尺寸后再撤掉覆盖层，露出待机页
                 SwapPanel.Visibility  = Visibility.Collapsed;
@@ -2453,7 +2458,7 @@ namespace AirPlayer.App
             SaveWindowPosition();
 
             if (_cursorSubclassProc != null)
-                RemoveWindowSubclass(_hWnd, _cursorSubclassProc, (IntPtr)1); // 卸载 WM_SETCURSOR 子类
+                RemoveWindowSubclass(_hWnd, _cursorSubclassProc, (IntPtr)2); // 卸载 WM_SETCURSOR 子类
             ShowCursor();          // 确保退出时光标可见
             _cts?.Cancel();        // 停止 AirPlay 监听
             _receiver?.Dispose();  // 释放接收器
