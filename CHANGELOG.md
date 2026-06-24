@@ -4,6 +4,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-06-25
+
+### 新增
+- 更多设置新增外观设置选项卡，加入待机界面呼吸灯颜色配置（内置赛博紫、冰川蓝、荧光绿、晚霞红等预设色，并支持自定义颜色及实时平滑切换）。
+
+### 修复
+- 修复全屏退出投屏时的崩溃卡死问题：引入异步等待机制，解决由于 DWM 重合成期间同步销毁渲染管线导致的冲突竞态死锁。
+- 修复全屏下鼠标指针隐藏经常失效的问题：废弃不稳定的光标覆写接口，采用底层位置偏移法完美实现全屏静止鼠标即隐藏（隐藏耗时由 3 秒缩短至 1.5 秒）。
+- 修复更改呼吸灯颜色后界面未能立即生效的问题（适配 WinUI 3 画刷重绘机制）。
+- 修复最大化及紧贴屏幕边缘时进行旋转会导致窗口尺寸计算错误及乱跳的问题。
+- 快捷方式显式指定 IconFilename 以提取正确的程序图标。
+
 ## [1.2.1] - 2026-06-24
 
 ### 新增
@@ -85,6 +97,7 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
+[1.3.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.3.0
 [1.2.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.2.1
 [1.2.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.2.0
 [1.1.2]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.2
