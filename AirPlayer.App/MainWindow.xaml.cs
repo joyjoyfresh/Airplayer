@@ -35,6 +35,9 @@ namespace AirPlayer.App
         // 应用窗口抽象，用于控制全屏和 Resize
         private AppWindow? _appWindow;
 
+        // 原生窗口句柄（供窗口比例锁定器使用）
+        private IntPtr _hWnd;
+
         // 全屏状态标志
         private bool _isFullScreen;
 
@@ -43,6 +46,7 @@ namespace AirPlayer.App
 
         // ===== 全 GPU 视频管线 =====
         private VideoPresenter? _presenter;           // 全 GPU 视频呈现器
+        private WindowAspectLocker? _aspectLocker;     // 窗口模式下的视频比例锁定器（投屏中安装，结束卸载）
         private bool _pipelineStarting;               // 管线是否正在创建
         private volatile bool _pipelineReady;         // 管线是否就绪
         private bool _gotKeyframe;                    // 是否已收到首个关键帧
@@ -91,6 +95,7 @@ namespace AirPlayer.App
 
             // 获取原生窗口句柄并绑定 AppWindow
             IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            _hWnd = hWnd; // 供窗口比例锁定器使用
             WindowId windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
             _appWindow = AppWindow.GetFromWindowId(windowId);
 
@@ -1517,6 +1522,14 @@ namespace AirPlayer.App
                 DiagLog.Write("[UI] 已补投首帧 IDR");
                 _pendingFirstFrame = null;
             }
+
+            // 安装窗口比例锁定：窗口模式下拖动缩放时，窗口始终保持视频比例（恰好框住视频，无黑边无裁切）。
+            // 全屏/非投屏时 GetLockAspect 返回 0，不干预缩放，不影响旋转等现有窗口逻辑。
+            if (_aspectLocker == null && _hWnd != IntPtr.Zero)
+            {
+                _aspectLocker = new WindowAspectLocker(_hWnd, GetLockAspect);
+                _aspectLocker.Install();
+            }
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -1566,6 +1579,10 @@ namespace AirPlayer.App
         {
             SwapPanel.SizeChanged -= SwapPanel_SizeChanged;
 
+            // 卸载窗口比例锁定（投屏结束，不再需要锁定视频比例）
+            _aspectLocker?.Dispose();
+            _aspectLocker = null;
+
             if (_appWindow != null)
                 _appWindow.Changed -= AppWindow_Changed;
 
@@ -1597,6 +1614,19 @@ namespace AirPlayer.App
         // ──────────────────────────────────────────────────────────────────
         // 工具方法
         // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 取当前应锁定的窗口客户区宽高比（宽:高）。
+        /// 仅在「投屏中 + 非全屏」时返回有效比例；否则返回 0 表示不锁定（自由缩放）。
+        /// 旋转 270° 时窗口比例与原视频宽高互换。
+        /// </summary>
+        private double GetLockAspect()
+        {
+            if (!_isMirroringActive || _isFullScreen || _videoWidth <= 0 || _videoHeight <= 0) return 0;
+            return _rotationDegrees == 270
+                ? (double)_videoHeight / _videoWidth
+                : (double)_videoWidth / _videoHeight;
+        }
 
         /// <summary>计算窗口目标尺寸（最大不超过屏幕 85%，保持视频比例）</summary>
         private void CalculateWindowSizeForVideo(int videoWidth, int videoHeight,
