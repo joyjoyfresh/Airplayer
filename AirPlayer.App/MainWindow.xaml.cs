@@ -1012,8 +1012,8 @@ namespace AirPlayer.App
             ExitMirroringMenuItem.Visibility = visibility;
             ActiveCastingSeparator.Visibility = visibility;
 
-            // 铺满屏幕仅在「投屏中 + 全屏」时才有意义
-            var fillVisibility = (_isMirroringActive && _isFullScreen) ? Visibility.Visible : Visibility.Collapsed;
+            // 铺满屏幕在投屏中显示（窗口模式与全屏均可切换铺满/信箱）
+            var fillVisibility = _isMirroringActive ? Visibility.Visible : Visibility.Collapsed;
             FillScreenMenuItem.Visibility = fillVisibility;
             FillScreenMenuItem.IsChecked  = _settings.FillScreen;
 
@@ -1878,7 +1878,7 @@ namespace AirPlayer.App
                     TakeScreenshot();
                     return true;
                 case "fill":
-                    if (_isMirroringActive && _isFullScreen)
+                    if (_isMirroringActive)
                     {
                         _settings.FillScreen = !_settings.FillScreen;
                         _settings.Save();
