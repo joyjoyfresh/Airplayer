@@ -151,7 +151,12 @@ namespace AirPlayer.App.Rendering
             }
             else
             {
-                _videoContext!.VideoProcessorSetStreamSourceRect(_processor, 0, false, default);
+                // 信箱模式同样裁掉纹理对齐 padding：H.264 解码纹理宽度向上对齐到 16 的倍数
+                // （如 886→896），右侧存在 padding。若用整个对齐纹理作源，padding 黑边会被映射进
+                // 画面造成横向压缩——切到铺满（已裁 padding）时显得"横向拉伸"。
+                // 这里与铺满统一：只取有效内容 _srcWidth x _srcHeight 作为源。
+                RawRect srcRect = new RawRect(0, 0, _srcWidth, _srcHeight);
+                _videoContext!.VideoProcessorSetStreamSourceRect(_processor, 0, true, srcRect);
                 RawRect destRect = CalcLetterboxRect(_srcWidth, _srcHeight, _dstWidth, _dstHeight);
                 _videoContext!.VideoProcessorSetStreamDestRect(_processor, 0, true, destRect);
             }
