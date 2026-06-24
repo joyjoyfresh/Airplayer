@@ -1628,6 +1628,18 @@ namespace AirPlayer.App
                 : (double)_videoWidth / _videoHeight;
         }
 
+        /// <summary>
+        /// 窗口是否处于不应主动改动尺寸的状态（全屏或最大化）。
+        /// 旋转时据此跳过 Resize/Move 与位置记忆，避免与系统最大化/全屏尺寸打架导致窗口乱跳。
+        /// </summary>
+        private bool IsWindowFixedSize()
+        {
+            if (_isFullScreen) return true;
+            if (_appWindow?.Presenter is OverlappedPresenter op)
+                return op.State == OverlappedPresenterState.Maximized;
+            return false;
+        }
+
         /// <summary>计算窗口目标尺寸（最大不超过屏幕 85%，保持视频比例）</summary>
         private void CalculateWindowSizeForVideo(int videoWidth, int videoHeight,
             out int winW, out int winH)
@@ -1934,7 +1946,8 @@ namespace AirPlayer.App
         /// <summary>保存当前旋转状态下的投屏态窗口位置和大小。</summary>
         private void SaveCastingWindowState()
         {
-            if (_appWindow == null || _isFullScreen) return;
+            // 全屏或最大化时窗口尺寸由系统决定，不应存入记忆（否则满屏尺寸会污染后续还原）
+            if (_appWindow == null || IsWindowFixedSize()) return;
 
             if (_rotationDegrees == 0)
             {
@@ -1964,9 +1977,9 @@ namespace AirPlayer.App
                 SwapPanel.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
                 SwapPanel.RenderTransform = new RotateTransform { Angle = 270 };
 
-                if (_isFullScreen)
+                if (IsWindowFixedSize())
                 {
-                    // 全屏下不能改窗口大小，直接按可视区域交换面板宽高
+                    // 全屏或最大化下不能改窗口大小，直接按可视区域交换面板宽高
                     SwapPanel.Width = MainGrid.ActualHeight;
                     SwapPanel.Height = MainGrid.ActualWidth;
                 }
@@ -1997,8 +2010,8 @@ namespace AirPlayer.App
                 SwapPanel.Height = double.NaN;
                 SwapPanel.RenderTransform = null;
 
-                // 窗口模式下：有记忆则恢复，否则计算默认值并居中
-                if (!_isFullScreen)
+                // 窗口模式下：有记忆则恢复，否则计算默认值并居中（全屏/最大化时不改动窗口尺寸）
+                if (!IsWindowFixedSize())
                 {
                     if (_castingSize0.HasValue)
                     {
