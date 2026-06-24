@@ -1341,6 +1341,18 @@ namespace AirPlayer.App
                 UpdateStandbyInfo();
                 ShowToast("投屏已结束");
 
+                // 投屏结束时若仍处于全屏：先切回普通窗口模式，再恢复待机窗口尺寸。
+                // 否则全屏 Presenter 会忽略 Resize，且系统会按「进入全屏前的尺寸」（即投屏视频尺寸）
+                // 还原，导致主界面变成视频/手机尺寸的窗口，而非用户设定的主界面大小。
+                if (_isFullScreen && _appWindow != null)
+                {
+                    _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
+                    _isFullScreen = false;
+                    // 切回普通窗口后恢复置顶设置（全屏切换可能重置 Presenter 属性）
+                    if (_appWindow.Presenter is OverlappedPresenter op)
+                        op.IsAlwaysOnTop = _settings.AlwaysOnTop;
+                }
+
                 // 恢复投屏前保存的待机态窗口位置和大小
                 RestoreWindowPosition();
             });
