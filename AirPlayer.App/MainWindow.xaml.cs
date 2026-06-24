@@ -846,10 +846,30 @@ namespace AirPlayer.App
             checkUpdatePanel.Children.Add(versionText);
             checkUpdatePanel.Children.Add(checkUpdateBtn);
 
+            // GitHub 访问令牌（可选）：用于检查更新鉴权，提升速率限额避免被限速；PasswordBox 掩码输入
+            var tokenBox = new PasswordBox
+            {
+                Header = "GitHub 访问令牌（可选）",
+                PlaceholderText = "留空则匿名访问（60 次/小时）",
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                // 回填已设置的令牌（掩码显示），便于用户查看已配置；清空后保存即删除令牌
+                Password = _settings.GitHubToken ?? ""
+            };
+            var tokenTip = new TextBlock
+            {
+                Text = "用于提升检查更新的速率限额（鉴权 5000 次/小时）。明文保存于本地配置，建议使用最小权限（公开仓库只读）令牌。",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.Gray),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 2, 0, 0)
+            };
+
             var updateContainer = new StackPanel { Spacing = 6 };
             updateContainer.Children.Add(updateHeader);
             updateContainer.Children.Add(autoUpdateSwitch);
             updateContainer.Children.Add(checkUpdatePanel);
+            updateContainer.Children.Add(tokenBox);
+            updateContainer.Children.Add(tokenTip);
 
             ContentDialog dlg = null!;
 
@@ -916,6 +936,9 @@ namespace AirPlayer.App
 
                 // 9.5 保存自动更新设置
                 _settings.AutoCheckUpdate = autoUpdateSwitch.IsOn;
+
+                // 9.6 保存 GitHub 访问令牌（可选，用于检查更新鉴权；留空则不使用令牌）
+                _settings.GitHubToken = string.IsNullOrWhiteSpace(tokenBox.Password) ? null : tokenBox.Password.Trim();
 
                 // 应用所有 HUD 设置并保存
                 ApplySettings();
@@ -2139,7 +2162,7 @@ namespace AirPlayer.App
             try
             {
                 updateInfo = await UpdateChecker.CheckForUpdateAsync(
-                    UpdateChecker.RepoOwner, UpdateChecker.RepoName);
+                    UpdateChecker.RepoOwner, UpdateChecker.RepoName, _settings.GitHubToken);
                 success = true;
             }
             catch (UpdateCheckException ex)

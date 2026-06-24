@@ -100,15 +100,21 @@ namespace AirPlayer.App
         /// <summary>检查是否有更新</summary>
         /// <param name="repoOwner">仓库拥有者，例如 "joyjoyfresh"</param>
         /// <param name="repoName">仓库名称，例如 "Airplayer"</param>
-        public static async Task<UpdateInfo?> CheckForUpdateAsync(string repoOwner, string repoName)
+        /// <param name="token">GitHub 访问令牌（可选）：鉴权后将匿名 60 次/小时限额提升到 5000 次/小时，避免被限速。为空则匿名访问。</param>
+        public static async Task<UpdateInfo?> CheckForUpdateAsync(string repoOwner, string repoName, string? token = null)
         {
             string url = $"https://api.github.com/repos/{repoOwner}/{repoName}/releases/latest";
-            DiagLog.Write($"[UPDATE] 正在向 {url} 检查更新...");
+            DiagLog.Write($"[UPDATE] 正在向 {url} 检查更新...（鉴权：{(string.IsNullOrWhiteSpace(token) ? "匿名" : "Token")}）");
+
+            // 按请求构造：鉴权头随 token 变化，不写进共享 HttpClient 默认头（避免运行时污染与残留）
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (!string.IsNullOrWhiteSpace(token))
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
 
             HttpResponseMessage response;
             try
             {
-                response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+                response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
             }
             catch (TaskCanceledException ex) when (!ex.CancellationToken.IsCancellationRequested)
             {

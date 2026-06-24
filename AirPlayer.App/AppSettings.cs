@@ -65,6 +65,9 @@ namespace AirPlayer.App
         /// <summary>启动时自动检查更新</summary>
         public bool AutoCheckUpdate { get; set; } = true;
 
+        /// <summary>GitHub 访问令牌（可选）：用于检查更新时鉴权，将匿名 60 次/小时提升到 5000 次/小时，避免被限速。明文保存于本地配置。</summary>
+        public string? GitHubToken { get; set; }
+
         /// <summary>跳过的更新版本号</summary>
         public string? SkippedVersion { get; set; }
 
