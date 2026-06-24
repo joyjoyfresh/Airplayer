@@ -202,5 +202,11 @@
             <TextBlock x:Name="ToastText" Foreground="{ThemeResource ToastTextBrush}" FontSize="14"
                        FontFamily="Segoe UI Variable, Microsoft YaHei"/>
         </Border>
+
+        <!-- 退出投屏切换窗口时的不透明覆盖层：盖住 SwapChainPanel 残留的最后一帧，
+             避免切回普通窗口触发 DWM 重合成时显示冻帧；仅在全屏退出投屏瞬间显示 -->
+        <Border x:Name="ExitOverlay"
+                Visibility="Collapsed"
+                Background="{ThemeResource AppBgBrush}"/>
     </Grid>
 </Window>

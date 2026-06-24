@@ -20,7 +20,6 @@ namespace AirPlayer.App.Rendering
 
         private readonly GpuDevice _gpu;             // 共享 D3D11 设备
         private IDXGISwapChain1? _swapChain;         // 翻转交换链
-        private SwapChainPanel? _panel;              // 绑定的面板（释放时需解绑，否则面板残留最后一帧）
         private int _width;                          // 当前交换链宽度
         private int _height;                         // 当前交换链高度
 
@@ -115,18 +114,6 @@ namespace AirPlayer.App.Rendering
         /// </summary>
         private void BindToPanel(SwapChainPanel panel)
         {
-            _panel = panel; // 记录面板，释放时需解绑
-            SetPanelSwapChain(panel, _swapChain!.NativePointer);
-            DiagLog.Write("[SWP] SwapChainPanel 绑定成功");
-        }
-
-        /// <summary>
-        /// 通过 ISwapChainPanelNative.SetSwapChain 设置面板绑定的交换链。
-        /// 传入 IntPtr.Zero 表示解绑（释放时调用，清除面板上残留的最后一帧画面）。
-        /// 必须在 UI 线程调用（面板 COM 操作要求在 UI 线程）。
-        /// </summary>
-        private void SetPanelSwapChain(SwapChainPanel panel, IntPtr swapChainPtr)
-        {
             // 1. 取原生 IUnknown 指针（CsWinRT 投影会将 IUnknown 委派给原生对象）
             IntPtr unkPtr = Marshal.GetIUnknownForObject(panel);
             try
@@ -143,7 +130,7 @@ namespace AirPlayer.App.Rendering
                     IntPtr fnPtr = Marshal.ReadIntPtr(vtable, 3 * IntPtr.Size);
                     var setSwapChain = (SetSwapChainFn)Marshal.GetDelegateForFunctionPointer(
                         fnPtr, typeof(SetSwapChainFn));
-                    hr = setSwapChain(nativePtr, swapChainPtr);
+                    hr = setSwapChain(nativePtr, _swapChain!.NativePointer);
                     if (hr < 0)
                         throw new COMException($"[SWP] SetSwapChain 失败: 0x{hr:X8}", hr);
                 }
@@ -156,6 +143,8 @@ namespace AirPlayer.App.Rendering
             {
                 Marshal.Release(unkPtr); // 释放 GetIUnknownForObject 获得的引用
             }
+
+            DiagLog.Write("[SWP] SwapChainPanel 绑定成功");
         }
 
         // ──────────────────────────────────────────────────────────────────
@@ -205,16 +194,6 @@ namespace AirPlayer.App.Rendering
 
         public void Dispose()
         {
-            // 先把交换链从面板解绑（传入 null 指针）。
-            // 否则面板仍持有已释放交换链的最后一帧画面，在窗口 presenter 切换
-            // （如退出全屏 SetPresenter）时会被 DWM 重新合成显示，导致画面冻在最后一帧。
-            if (_panel != null)
-            {
-                try { SetPanelSwapChain(_panel, IntPtr.Zero); }
-                catch (Exception ex) { DiagLog.Write($"[SWP] 解绑面板失败（非致命）: {ex.Message}"); }
-                _panel = null;
-            }
-
             _swapChain?.Dispose();  // 释放交换链
             _swapChain = null;
             DiagLog.Write("[SWP] DxgiSwapChainHost 已释放");

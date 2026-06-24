@@ -1321,6 +1321,14 @@ namespace AirPlayer.App
             DispatcherQueue.TryEnqueue(() =>
             {
                 _isMirroringActive = false;
+
+                // 全屏下退出投屏：切回普通窗口前先用不透明覆盖层盖住视频面板。
+                // 切窗口会触发 DWM 重合成，swapchain 的最后一帧会被重新显示（冻屏）；
+                // 用覆盖层物理遮挡残留帧，避免显式解绑 swapchain（WinUI3 解绑后窗口合成会崩溃）。
+                bool wasFullScreen = _isFullScreen;
+                if (wasFullScreen)
+                    ExitOverlay.Visibility = Visibility.Visible;
+
                 StopVideoPipeline();
 
                 // 释放音频播放器
@@ -1334,17 +1342,10 @@ namespace AirPlayer.App
                 MenuButton.Visibility = Visibility.Visible;
                 _lastPresentedForFps = 0;
 
-                SwapPanel.Visibility  = Visibility.Collapsed;
-                PromoGrid.Visibility  = Visibility.Visible;
-
-                // 刷新待机信息（IP/网络可能已变化）并提示
-                UpdateStandbyInfo();
-                ShowToast("投屏已结束");
-
-                // 投屏结束时若仍处于全屏：先切回普通窗口模式，再恢复待机窗口尺寸。
+                // 全屏下退出投屏：切回普通窗口模式（覆盖层已盖住 swapchain 残留帧，DWM 重合成不显示冻屏）。
                 // 否则全屏 Presenter 会忽略 Resize，且系统会按「进入全屏前的尺寸」（即投屏视频尺寸）
                 // 还原，导致主界面变成视频/手机尺寸的窗口，而非用户设定的主界面大小。
-                if (_isFullScreen && _appWindow != null)
+                if (wasFullScreen && _appWindow != null)
                 {
                     _appWindow.SetPresenter(AppWindowPresenterKind.Overlapped);
                     _isFullScreen = false;
@@ -1353,8 +1354,14 @@ namespace AirPlayer.App
                         op.IsAlwaysOnTop = _settings.AlwaysOnTop;
                 }
 
-                // 恢复投屏前保存的待机态窗口位置和大小
+                // 切回普通窗口并恢复待机窗口尺寸后再撤掉覆盖层，露出待机页
+                SwapPanel.Visibility  = Visibility.Collapsed;
+                PromoGrid.Visibility  = Visibility.Visible;
+                UpdateStandbyInfo();
                 RestoreWindowPosition();
+                ExitOverlay.Visibility = Visibility.Collapsed;
+
+                ShowToast("投屏已结束");
             });
         }
 
