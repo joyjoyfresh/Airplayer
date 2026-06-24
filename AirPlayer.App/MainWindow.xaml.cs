@@ -254,10 +254,13 @@ namespace AirPlayer.App
             HudText.Foreground = new SolidColorBrush(GetColorFromHex(_settings.HudTextColor));
             HudPanel.Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = _settings.HudBgOpacity };
 
-            // 应用待机呼吸灯颜色
+            // 应用待机呼吸灯颜色（WinUI 3 中修改现有 GradientStop.Color 不会触发形状重绘，因此重新创建画刷并赋值强制刷新）
             var glowColor = GetColorFromHex(_settings.PulseGlowColor);
-            PulseGlowCenter.Color = glowColor;
-            PulseGlowEdge.Color = Windows.UI.Color.FromArgb(0, glowColor.R, glowColor.G, glowColor.B);
+            var transparentGlow = Windows.UI.Color.FromArgb(0, glowColor.R, glowColor.G, glowColor.B);
+            var brush = new Microsoft.UI.Xaml.Media.RadialGradientBrush();
+            brush.GradientStops.Add(new Microsoft.UI.Xaml.Media.GradientStop { Color = glowColor, Offset = 0 });
+            brush.GradientStops.Add(new Microsoft.UI.Xaml.Media.GradientStop { Color = transparentGlow, Offset = 1 });
+            PulseGlow.Fill = brush;
         }
 
         /// <summary>把设置中的主题字符串映射为 ElementTheme（Default=跟随系统）。</summary>
