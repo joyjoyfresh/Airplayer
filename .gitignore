@@ -56,7 +56,6 @@ venv/
 .codegraph/
 .github/
 .agents/
-.claude/
 
 # Native libraries (binary deps, fetched per-machine; not committed)
 AirPlayer.App/native/*.dll
