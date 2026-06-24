@@ -1684,15 +1684,28 @@ namespace AirPlayer.App
         }
 
         /// <summary>
-        /// 窗口是否处于不应主动改动尺寸的状态（全屏或最大化）。
-        /// 旋转时据此跳过 Resize/Move 与位置记忆，避免与系统最大化/全屏尺寸打架导致窗口乱跳。
+        /// 窗口是否处于不应主动改动尺寸的状态（全屏、最大化，或上下边紧贴工作区边缘）。
+        /// 旋转时据此跳过 Resize/Move 与位置记忆，避免与系统 snap/最大化逻辑打架导致窗口乱跳。
         /// </summary>
         private bool IsWindowFixedSize()
         {
             if (_isFullScreen) return true;
-            if (_appWindow?.Presenter is OverlappedPresenter op)
-                return op.State == OverlappedPresenterState.Maximized;
-            return false;
+            if (_appWindow?.Presenter is OverlappedPresenter op && op.State == OverlappedPresenterState.Maximized)
+                return true;
+            // 上下边同时紧贴工作区边缘时，Windows 11 snap 机制会在 Resize 时先 un-snap 再重定位，导致乱跳
+            return IsWindowTouchingVerticalScreenEdges();
+        }
+
+        /// <summary>窗口上下边是否同时紧贴当前屏幕工作区边缘（±4px 容差）。</summary>
+        private bool IsWindowTouchingVerticalScreenEdges()
+        {
+            if (_appWindow == null) return false;
+            var displayArea = DisplayArea.GetFromWindowId(_appWindow.Id, DisplayAreaFallback.Nearest);
+            if (displayArea == null) return false;
+            var wa = displayArea.WorkArea;                  // 物理像素
+            var pos = _appWindow.Position;
+            var size = _appWindow.Size;
+            return pos.Y <= wa.Y + 4 && pos.Y + size.Height >= wa.Y + wa.Height - 4;
         }
 
         /// <summary>计算窗口目标尺寸（最大不超过屏幕 85%，保持视频比例）</summary>
