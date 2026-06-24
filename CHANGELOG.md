@@ -4,6 +4,14 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.1] - 2026-06-24
+
+### 新增
+- 检查更新支持配置 GitHub 访问令牌：在「更多设置」中填入个人 Token 后，更新检测速率上限从匿名的 60 次/小时提升至 5000 次/小时，避免被 API 限速（Token 明文保存于本地配置）。
+
+### 修复
+- 图标在 Windows 任务栏与标题栏显示过小/未填满的问题：图标内容由占画布 76% 放大至 98%，同时保留圆角透明效果。
+
 ## [1.2.0] - 2026-06-24
 
 ### 新增
@@ -77,6 +85,7 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
+[1.2.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.2.1
 [1.2.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.2.0
 [1.1.2]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.2
 [1.1.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.1.1
