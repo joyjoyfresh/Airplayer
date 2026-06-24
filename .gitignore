@@ -55,7 +55,7 @@ venv/
 .mimocode/
 .codegraph/
 .github/
-.agent/
+.agents/
 .claude/
 
 # Native libraries (binary deps, fetched per-machine; not committed)
