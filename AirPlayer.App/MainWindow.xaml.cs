@@ -86,7 +86,8 @@ namespace AirPlayer.App
 
         // ===== 全屏鼠标指针自动隐藏 =====
         private DispatcherTimer? _cursorHideTimer;        // 全屏下鼠标静止 3s 后隐藏指针
-        private bool _cursorHidden;                         // 当前鼠标指针是否已隐藏
+        private bool _cursorHidden;                       // 当前鼠标指针是否已隐藏
+        private CursorSubclassProc? _cursorSubclassProc; // 防委托被 GC 回收
 
         /// <summary>初始化主窗口并启动 AirPlay 接收服务</summary>
         public MainWindow()
@@ -97,6 +98,10 @@ namespace AirPlayer.App
             IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             _hWnd = hWnd; // 供窗口比例锁定器使用
             WindowId windowId = Win32Interop.GetWindowIdFromWindow(hWnd);
+
+            // 安装 WM_SETCURSOR 子类：拦截 WinUI3 每次鼠标消息后重置光标的行为
+            _cursorSubclassProc = CursorSubclassWndProc;
+            SetWindowSubclass(hWnd, _cursorSubclassProc, (IntPtr)1, IntPtr.Zero);
             _appWindow = AppWindow.GetFromWindowId(windowId);
 
             // 设置应用窗口的图标
@@ -1158,25 +1163,53 @@ namespace AirPlayer.App
             HideCursor();
         }
 
-        // Win32 ShowCursor 返回操作后的显示计数（≥0 可见，<0 隐藏）。
-        // WinUI3 内部可能多次调用 ShowCursor(true)，需循环减到负数才能真正隐藏。
-        [DllImport("user32.dll")]
-        private static extern int ShowCursor([MarshalAs(UnmanagedType.Bool)] bool bShow);
+        // WinUI3 每次处理鼠标消息都会发送 WM_SETCURSOR 并恢复光标形状，
+        // Win32 ShowCursor 计数法无效。正确方案：子类化窗口拦截 WM_SETCURSOR，
+        // 隐藏期间调 SetCursor(NULL) 并吃掉消息，阻止框架恢复光标。
+        private delegate IntPtr CursorSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData);
 
-        /// <summary>隐藏鼠标指针：循环调用 ShowCursor(false) 直到计数 &lt; 0。</summary>
+        [DllImport("comctl32.dll")]
+        private static extern bool SetWindowSubclass(IntPtr hWnd, CursorSubclassProc pfnSubclass, IntPtr uIdSubclass, IntPtr dwRefData);
+
+        [DllImport("comctl32.dll")]
+        private static extern bool RemoveWindowSubclass(IntPtr hWnd, CursorSubclassProc pfnSubclass, IntPtr uIdSubclass);
+
+        [DllImport("comctl32.dll")]
+        private static extern IntPtr DefSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetCursor(IntPtr hCursor);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
+
+        private static readonly IntPtr IDC_ARROW = new IntPtr(32512);
+        private const uint WM_SETCURSOR = 0x0020;
+
+        private IntPtr CursorSubclassWndProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, IntPtr uIdSubclass, IntPtr dwRefData)
+        {
+            if (uMsg == WM_SETCURSOR && _cursorHidden)
+            {
+                SetCursor(IntPtr.Zero); // 无光标
+                return (IntPtr)1;       // TRUE：已处理，阻止默认行为
+            }
+            return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+        }
+
+        /// <summary>隐藏鼠标指针：设置标志并立即清除当前光标。</summary>
         private void HideCursor()
         {
             if (_cursorHidden) return;
-            while (ShowCursor(false) >= 0) { }
             _cursorHidden = true;
+            SetCursor(IntPtr.Zero);
         }
 
-        /// <summary>恢复鼠标指针：循环调用 ShowCursor(true) 直到计数 ≥ 0。</summary>
+        /// <summary>恢复鼠标指针：清除标志并立即恢复箭头光标。</summary>
         private void ShowCursor()
         {
             if (!_cursorHidden) return;
-            while (ShowCursor(true) < 0) { }
             _cursorHidden = false;
+            SetCursor(LoadCursor(IntPtr.Zero, IDC_ARROW));
         }
 
         /// <summary>刷新待机页信息卡：本机 IP 与当前网络名。</summary>
@@ -2384,6 +2417,9 @@ namespace AirPlayer.App
             // 非全屏时保存窗口位置和大小
             SaveWindowPosition();
 
+            if (_cursorSubclassProc != null)
+                RemoveWindowSubclass(_hWnd, _cursorSubclassProc, (IntPtr)1); // 卸载 WM_SETCURSOR 子类
+            ShowCursor();          // 确保退出时光标可见
             _cts?.Cancel();        // 停止 AirPlay 监听
             _receiver?.Dispose();  // 释放接收器
             StopVideoPipeline();   // 释放视频管线
