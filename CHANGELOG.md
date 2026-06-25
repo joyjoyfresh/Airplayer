@@ -4,6 +4,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.4.2] - 2026-06-26
+
+### 新增
+- 关闭窗口时弹出询问对话框，可选留在后台或直接退出，勾选「下次不再询问」后记住选择；在「更多设置 → 通用」可随时重新开启询问。
+- 音视频设置新增播放音量调节（0–100%），独立于 iOS 端音量控制，设置后实时生效。
+
+### 修复
+- 修复在安装了 Clash/V2Ray 等代理软件（TUN 模式）的电脑上，iOS 无法发现设备的问题：mDNS 现在只使用有 RFC1918 私有 IP 的网卡，排除代理虚拟网卡（如 2.0.0.1）干扰。
+
+### 变更
+- 自动检查更新默认改为关闭（可在「更多设置 → 通用」手动开启）。
+
 ## [1.4.1] - 2026-06-26
 
 ### 新增
@@ -112,6 +124,7 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
+[1.4.2]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.4.2
 [1.4.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.4.1
 [1.4.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.4.0
 [1.3.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.3.0

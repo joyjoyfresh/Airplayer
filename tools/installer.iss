@@ -15,7 +15,7 @@
 ; ============================================================
 
 #define MyAppName "AirPlayer"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "1.4.2"
 #define MyAppPublisher "AirPlayer"
 #define MyAppExeName "AirPlayer.App.exe"
 ; Release output folder (from build-release.ps1), relative to this tools\ folder

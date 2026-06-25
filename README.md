@@ -14,7 +14,7 @@
   <a href="https://github.com/joyjoyfresh/Airplayer"><img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?style=for-the-badge&logo=windows" alt="Platform" /></a>
   <a href="https://dotnet.microsoft.com/"><img src="https://img.shields.io/badge/.NET-8.0-blueviolet?style=for-the-badge&logo=dotnet" alt=".NET" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-orange?style=for-the-badge" alt="License" /></a>
-  <img src="https://img.shields.io/badge/Version-1.4.1-brightgreen?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-1.4.2-brightgreen?style=for-the-badge" alt="Version" />
 </p>
 
 ---
@@ -141,7 +141,7 @@ dotnet run --project AirPlayer.App
 
 您可以使用内置的打包脚本快速生成独立运行的绿色包：
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\build-release.ps1 -Version 1.4.1
+powershell -ExecutionPolicy Bypass -File tools\build-release.ps1 -Version 1.4.2
 ```
 打包成功后，将在 `publish\AirPlayer-1.4.0-win-x64\` 中生成免安装绿色版本（包含 exe 启动程序、所有依赖运行时以及自动嵌入的 `fdk-aac.dll`）。
 
