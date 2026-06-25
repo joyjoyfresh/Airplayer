@@ -164,7 +164,7 @@
                     <MenuFlyoutItem x:Name="ScreenshotMenuItem" Text="屏幕截图 (S)" Click="ScreenshotButton_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE722;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
-                    <MenuFlyoutItem x:Name="RecordMenuItem" Text="开始录制 (Ctrl+R)" Click="RecordButton_Click">
+                    <MenuFlyoutItem x:Name="RecordMenuItem" Text="开始录制 (C)" Click="RecordButton_Click">
                         <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE7C8;"/></MenuFlyoutItem.Icon>
                     </MenuFlyoutItem>
                     <MenuFlyoutItem x:Name="ExitMirroringMenuItem" Text="退出投屏 (Q)" Click="ExitMirroringMenuItem_Click">

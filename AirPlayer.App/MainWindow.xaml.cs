@@ -1280,7 +1280,7 @@ namespace AirPlayer.App
             ScreenshotMenuItem.Visibility    = visibility;
             RecordMenuItem.Visibility        = visibility;
             // 录制中显示「停止录制」，否则「开始录制」
-            RecordMenuItem.Text = _recorder != null ? "停止录制 (Ctrl+R)" : "开始录制 (Ctrl+R)";
+            RecordMenuItem.Text = _recorder != null ? "停止录制 (C)" : "开始录制 (C)";
             ExitMirroringMenuItem.Visibility = visibility;
             ActiveCastingSeparator.Visibility = visibility;
 
@@ -2164,7 +2164,7 @@ namespace AirPlayer.App
             new ShortcutDef { Id = "ontop",      Name = "窗口置顶",  Default = "T" },
             new ShortcutDef { Id = "stop",       Name = "退出投屏",  Default = "Q" },
             new ShortcutDef { Id = "screenshot", Name = "屏幕截图",  Default = "S" },
-            new ShortcutDef { Id = "record",     Name = "录制投屏",  Default = "Ctrl+R" },
+            new ShortcutDef { Id = "record",     Name = "录制投屏",  Default = "C" },
             new ShortcutDef { Id = "fill",       Name = "铺满屏幕",  Default = "F" },
         };
 
