@@ -117,12 +117,9 @@
             </StackPanel>
         </Grid>
         
-        <!-- 左上角实时 HUD（默认隐藏，可在设置或按 H 切换）-->
+        <!-- 实时 HUD（默认隐藏，位置由 ApplySettings 动态设置）-->
         <Border x:Name="HudPanel"
                 Visibility="Collapsed"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Top"
-                Margin="20"
                 Background="#90000000"
                 CornerRadius="12"
                 Padding="14,9">

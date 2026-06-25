@@ -254,10 +254,25 @@ namespace AirPlayer.App
             
             HudPanel.Visibility = _settings.ShowHud ? Visibility.Visible : Visibility.Collapsed;
 
-            // 应用 HUD 自定义尺寸、颜色和背景透明度参数
+            // 应用 HUD 自定义尺寸、颜色、背景透明度和位置
             HudText.FontSize = _settings.HudFontSize;
             HudText.Foreground = new SolidColorBrush(GetColorFromHex(_settings.HudTextColor));
             HudPanel.Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = _settings.HudBgOpacity };
+            {
+                bool hudRight  = _settings.HudCorner == 1 || _settings.HudCorner == 3;
+                bool hudBottom = _settings.HudCorner == 2 || _settings.HudCorner == 3;
+                HudPanel.HorizontalAlignment = hudRight  ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+                HudPanel.VerticalAlignment   = hudBottom ? VerticalAlignment.Bottom  : VerticalAlignment.Top;
+                int hox = _settings.HudOffsetX, hoy = _settings.HudOffsetY;
+                HudPanel.Margin = _settings.HudCorner switch
+                {
+                    0 => new Thickness(hox, hoy, 0,   0  ), // 左上
+                    1 => new Thickness(0,   hoy, hox, 0  ), // 右上
+                    2 => new Thickness(hox, 0,   0,   hoy), // 左下
+                    3 => new Thickness(0,   0,   hox, hoy), // 右下
+                    _ => new Thickness(12,  12,  0,   0  )
+                };
+            }
 
             // 应用待机呼吸灯颜色（WinUI 3 中修改现有 GradientStop.Color 不会触发形状重绘，因此重新创建画刷并赋值强制刷新）
             var glowColor = GetColorFromHex(_settings.PulseGlowColor);
@@ -643,7 +658,34 @@ namespace AirPlayer.App
                 HorizontalAlignment = HorizontalAlignment.Stretch
             };
 
+            var hudCornerCombo = new ComboBox
+            {
+                Header = "HUD 位置",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            hudCornerCombo.Items.Add("左上角");
+            hudCornerCombo.Items.Add("右上角");
+            hudCornerCombo.Items.Add("左下角");
+            hudCornerCombo.Items.Add("右下角");
+            hudCornerCombo.SelectedIndex = Math.Clamp(_settings.HudCorner, 0, 3);
+
+            var hudOffsetXSlider = new Slider
+            {
+                Header = "水平偏移 (px)",
+                Minimum = 0, Maximum = 200, Value = _settings.HudOffsetX,
+                StepFrequency = 4, HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var hudOffsetYSlider = new Slider
+            {
+                Header = "垂直偏移 (px)",
+                Minimum = 0, Maximum = 200, Value = _settings.HudOffsetY,
+                StepFrequency = 4, HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
             var hudContainer = new StackPanel { Spacing = 10, Margin = new Thickness(0, 0, 0, 4) };
+            hudContainer.Children.Add(hudCornerCombo);
+            hudContainer.Children.Add(hudOffsetXSlider);
+            hudContainer.Children.Add(hudOffsetYSlider);
             hudContainer.Children.Add(hudSizeSlider);
             hudContainer.Children.Add(colorCombo);
             hudContainer.Children.Add(hudOpacitySlider);
@@ -1152,9 +1194,12 @@ namespace AirPlayer.App
                 _settings.DeviceName = string.IsNullOrEmpty(name) ? null : name;
 
                 // 2. 更新 HUD 参数型设置
-                _settings.HudFontSize = (int)hudSizeSlider.Value;
+                _settings.HudFontSize  = (int)hudSizeSlider.Value;
                 _settings.HudTextColor = colors[colorCombo.SelectedIndex].Hex;
                 _settings.HudBgOpacity = hudOpacitySlider.Value / 100.0;
+                _settings.HudCorner    = hudCornerCombo.SelectedIndex;
+                _settings.HudOffsetX   = (int)hudOffsetXSlider.Value;
+                _settings.HudOffsetY   = (int)hudOffsetYSlider.Value;
 
                 // 2b. 更新录制角标设置
                 _settings.RecBadgeCorner    = recBadgeCornerCombo.SelectedIndex;

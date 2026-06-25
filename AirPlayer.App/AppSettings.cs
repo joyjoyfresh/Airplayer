@@ -26,8 +26,17 @@ namespace AirPlayer.App
         /// <summary>HUD 文本颜色Hex</summary>
         public string HudTextColor { get; set; } = "#00E676";
 
-        /// <summary>HUD 背景透明度 (0.0 到 1.0)</summary>
-        public double HudBgOpacity { get; set; } = 0.56;
+        /// <summary>HUD 背景不透明度 (0.0 到 1.0)</summary>
+        public double HudBgOpacity { get; set; } = 0.30;
+
+        /// <summary>HUD 位置：0=左上, 1=右上, 2=左下, 3=右下</summary>
+        public int HudCorner { get; set; } = 0;
+
+        /// <summary>HUD 水平偏移（像素）</summary>
+        public int HudOffsetX { get; set; } = 12;
+
+        /// <summary>HUD 垂直偏移（像素）</summary>
+        public int HudOffsetY { get; set; } = 12;
 
         /// <summary>窗口位置 X（像素），null 表示首次启动默认居中</summary>
         public int? WindowX { get; set; }
@@ -116,7 +125,10 @@ namespace AirPlayer.App
                     {
                         if (s.HudFontSize <= 0) s.HudFontSize = 13;
                         if (string.IsNullOrEmpty(s.HudTextColor)) s.HudTextColor = "#00E676";
-                        if (s.HudBgOpacity < 0 || s.HudBgOpacity > 1) s.HudBgOpacity = 0.56;
+                        if (s.HudBgOpacity < 0 || s.HudBgOpacity > 1) s.HudBgOpacity = 0.30;
+                        if (s.HudCorner < 0 || s.HudCorner > 3) s.HudCorner = 0;
+                        if (s.HudOffsetX < 0) s.HudOffsetX = 12;
+                        if (s.HudOffsetY < 0) s.HudOffsetY = 12;
                         if (s.Shortcuts == null) s.Shortcuts = new Dictionary<string, string>(); // 旧配置文件无此字段
                         if (string.IsNullOrEmpty(s.Theme)) s.Theme = "System"; // 旧配置文件无此字段
                         if (s.RecBadgeCorner < 0 || s.RecBadgeCorner > 3) s.RecBadgeCorner = 0;
