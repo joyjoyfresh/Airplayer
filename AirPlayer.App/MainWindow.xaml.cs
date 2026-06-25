@@ -308,11 +308,19 @@ namespace AirPlayer.App
             int hoy = _settings.HudOffsetY;
 
             // 同角冲突：录制角标优先，HUD 顺着 Y 轴往内偏移让出角标空间
-            if (_recorder != null && _settings.HudCorner == _settings.RecBadgeCorner)
+            // 注意两者角编号不同：HUD 0=左上/1=右上/2=左下/3=右下，RecBadge 0=左下/1=右下/2=左上/3=右上
+            if (_recorder != null)
             {
-                int badgeH = _settings.RecBadgeFontSize + 24; // 字号 + 上下 padding 估算
-                int displaced = _settings.RecBadgeOffsetY + badgeH + 8; // 角标外边 + 8px 间距
-                if (displaced > hoy) hoy = displaced;
+                bool hR = _settings.HudCorner      == 1 || _settings.HudCorner      == 3;
+                bool hB = _settings.HudCorner      == 2 || _settings.HudCorner      == 3;
+                bool rR = _settings.RecBadgeCorner == 1 || _settings.RecBadgeCorner == 3;
+                bool rB = _settings.RecBadgeCorner == 0 || _settings.RecBadgeCorner == 1;
+                if (hR == rR && hB == rB)
+                {
+                    int badgeH    = _settings.RecBadgeFontSize + 24; // 字号 + 上下 padding 估算
+                    int displaced = _settings.RecBadgeOffsetY + badgeH + 8; // 角标外边 + 8px 间距
+                    if (displaced > hoy) hoy = displaced;
+                }
             }
 
             HudPanel.Margin = _settings.HudCorner switch
