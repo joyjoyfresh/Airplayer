@@ -57,7 +57,7 @@ namespace AirPlayer.App
         public string? RecordingSavePath { get; set; }
 
         /// <summary>录制角标位置：0=左下, 1=右下, 2=左上, 3=右上</summary>
-        public int RecBadgeCorner { get; set; } = 0;
+        public int RecBadgeCorner { get; set; } = 2;
 
         /// <summary>录制角标水平偏移（像素）</summary>
         public int RecBadgeOffsetX { get; set; } = 12;
@@ -131,7 +131,7 @@ namespace AirPlayer.App
                         if (s.HudOffsetY < 0) s.HudOffsetY = 12;
                         if (s.Shortcuts == null) s.Shortcuts = new Dictionary<string, string>(); // 旧配置文件无此字段
                         if (string.IsNullOrEmpty(s.Theme)) s.Theme = "System"; // 旧配置文件无此字段
-                        if (s.RecBadgeCorner < 0 || s.RecBadgeCorner > 3) s.RecBadgeCorner = 0;
+                        if (s.RecBadgeCorner < 0 || s.RecBadgeCorner > 3) s.RecBadgeCorner = 2;
                         if (s.RecBadgeOffsetX < 0) s.RecBadgeOffsetX = 12;
                         if (s.RecBadgeOffsetY < 0) s.RecBadgeOffsetY = 12;
                         if (s.RecBadgeBgOpacity < 0 || s.RecBadgeBgOpacity > 1) s.RecBadgeBgOpacity = 0.30;

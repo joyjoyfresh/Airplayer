@@ -4,6 +4,12 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.4.1] - 2026-06-26
+
+### 新增
+- 录制状态角标（REC 计时器）支持自定义位置（左上/右上/左下/右下角）、水平/垂直偏移、背景不透明度、字体大小，默认左上角；点击角标可直接停止录制。
+- HUD 监控面板支持自定义位置与偏移，默认左上角；与录制角标同角时 HUD 自动下移避让，录制结束后恢复原位。
+
 ## [1.4.0] - 2026-06-25
 
 ### 新增
@@ -106,6 +112,7 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
+[1.4.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.4.1
 [1.4.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.4.0
 [1.3.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.3.0
 [1.2.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.2.1
