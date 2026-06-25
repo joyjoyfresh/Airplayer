@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+**重要提示：**无论如何使用简体中文回答
+
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
