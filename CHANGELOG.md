@@ -4,6 +4,15 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.4.0] - 2026-06-25
+
+### 新增
+- **视频录制**：投屏过程中一键录制为 MP4（含音频）。采用 Media Foundation SinkWriter，将解码后的画面经硬件 H.264 编码、音频经 AAC 编码混流封装。编码器在起始处自插关键帧，可在任意时刻立即开录，无需等待 iOS 端关键帧。支持工具栏菜单、快捷键（默认 `C`）触发，并可在「更多设置」中配置录制保存目录（默认 `视频\AirPlayer`）。投屏断开或退出应用时自动停止并保存。
+
+### 修复
+- 修复长时间录制生成的文件无法播放的问题：停止录制时完整等待写入线程排空积压并写出 MP4 的 moov 索引后再释放资源，避免旧的超时机制中途打断收尾导致文件缺索引。
+- 修复停止长视频录制时界面卡顿的问题：停止收尾改为后台执行，先提示「正在保存录制…」，写完后再提示结果，不再阻塞界面。
+
 ## [1.3.0] - 2026-06-25
 
 ### 新增
@@ -97,6 +106,7 @@ H.264 全 GPU 硬件解码、AAC-ELD 音频，音画同步。
 - iOS 端调节音量在 Windows 播放端无效的问题。
 - 打包脚本编码问题（改为纯 ASCII，避免无 BOM UTF-8 在 Windows PowerShell 下乱码）。
 
+[1.4.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.4.0
 [1.3.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.3.0
 [1.2.1]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.2.1
 [1.2.0]: https://github.com/joyjoyfresh/Airplayer/releases/tag/v1.2.0

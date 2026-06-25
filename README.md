@@ -14,7 +14,7 @@
   <a href="https://github.com/joyjoyfresh/Airplayer"><img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?style=for-the-badge&logo=windows" alt="Platform" /></a>
   <a href="https://dotnet.microsoft.com/"><img src="https://img.shields.io/badge/.NET-8.0-blueviolet?style=for-the-badge&logo=dotnet" alt=".NET" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-orange?style=for-the-badge" alt="License" /></a>
-  <img src="https://img.shields.io/badge/Version-1.3.0-brightgreen?style=for-the-badge" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-1.4.0-brightgreen?style=for-the-badge" alt="Version" />
 </p>
 
 ---
@@ -41,6 +41,7 @@
 
 ## ✨ 核心特性
 
+- 🔴 **投屏录制（核心功能）**：投屏过程中一键将画面与声音录制为 MP4（音画同步）。基于 Media Foundation SinkWriter，将解码后的画面经**硬件 H.264 编码**、音频经 **AAC 编码**实时混流封装；编码器在起始处自插关键帧，**任意时刻都能立即开录**，无需苦等 iOS 端关键帧。支持菜单与快捷键（默认 `C`）触发，可自定义录制保存目录，投屏断开或退出应用时自动停止并妥善保存。
 - ⚡ **全 GPU 加速视频管线**：视频流（H.264）采用 Media Foundation 硬件解码，辅以 D3D11 Video Processor 进行色彩转换与缩放，通过 DXGI 翻转交换链呈现。低延迟、极低 CPU 占用，不支持硬解时自动回退软解。
 - 🎵 **高保真音频同步**：音频流（AAC-ELD）使用 `fdk-aac` 解码并结合波形音频 API（waveOut）进行低延迟输出，配合有界音视频对齐缓冲机制实现音画同步。
 - 🔄 **自适应旋转与热重置**：完美处理 iOS 设备横竖屏切换引发的分辨率剧烈变化，支持解码器与渲染链的热重置及错误自动恢复。
@@ -50,6 +51,7 @@
   - 帧率上限控制（30 / 60fps）
   - 自定义音频输出设备选择
   - 窗口置顶、一键截图（可指定截图保存目录）
+  - 投屏录制（可指定录制保存目录，默认 `视频\AirPlayer`）
 - 📊 **实时 HUD 诊断**：内置实时性能监视看板，直观展示当前投屏分辨率、帧率、硬件解码状态以及丢帧情况。
 
 ---
@@ -139,9 +141,9 @@ dotnet run --project AirPlayer.App
 
 您可以使用内置的打包脚本快速生成独立运行的绿色包：
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\build-release.ps1 -Version 1.3.0
+powershell -ExecutionPolicy Bypass -File tools\build-release.ps1 -Version 1.4.0
 ```
-打包成功后，将在 `publish\AirPlayer-1.3.0-win-x64\` 中生成免安装绿色版本（包含 exe 启动程序、所有依赖运行时以及自动嵌入的 `fdk-aac.dll`）。
+打包成功后，将在 `publish\AirPlayer-1.4.0-win-x64\` 中生成免安装绿色版本（包含 exe 启动程序、所有依赖运行时以及自动嵌入的 `fdk-aac.dll`）。
 
 ---
 
