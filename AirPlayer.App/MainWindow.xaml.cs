@@ -80,6 +80,8 @@ namespace AirPlayer.App
         private DispatcherTimer? _hudTimer;            // HUD 刷新定时器（1s）
         private DispatcherTimer? _controlHideTimer;    // 控制条自动隐藏定时器（3s）
         private DispatcherTimer? _toastTimer;          // 瞬时提示自动消失定时器
+        private DispatcherTimer? _recTimer;            // 录制计时器（1s 刷新角标）
+        private DateTime _recStartTime;                // 录制开始时间
         private int _lastPresentedForFps;              // 上次呈现帧计数（算 FPS）
         private bool _menuOpen;                         // 菜单是否打开（打开时不自动隐藏按钮）
         private bool _titleThemeHooked;                 // 是否已订阅 ActualThemeChanged（避免重复订阅）
@@ -462,6 +464,20 @@ namespace AirPlayer.App
                 // 挂接渲染线程的 NV12 读回 → 录制器（重编码）
                 _presenter.SetRecordSink((nv12, w, h) => _recorder?.WriteVideoNv12(nv12, w, h));
                 ShowToast("开始录制…");
+                // 显示录制状态角标并启动计时器
+                _recStartTime = DateTime.Now;
+                RecordingBadge.Visibility = Visibility.Visible;
+                RecTimerText.Text = "REC 00:00";
+                if (_recTimer == null)
+                {
+                    _recTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+                    _recTimer.Tick += (s, e) =>
+                    {
+                        var el = DateTime.Now - _recStartTime;
+                        RecTimerText.Text = $"REC {(int)el.TotalMinutes:D2}:{el.Seconds:D2}";
+                    };
+                }
+                _recTimer.Start();
             }
             catch (Exception ex)
             {
@@ -482,6 +498,9 @@ namespace AirPlayer.App
             if (rec == null) return;
             _recorder = null;
             _presenter?.SetRecordSink(null); // 停止渲染线程读回
+            // 隐藏录制状态角标
+            _recTimer?.Stop();
+            RecordingBadge.Visibility = Visibility.Collapsed;
 
             if (waitSync)
             {

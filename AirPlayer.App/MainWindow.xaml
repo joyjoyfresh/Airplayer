@@ -191,6 +191,26 @@
             </Button.Flyout>
         </Button>
 
+        <!-- 录制状态角标（录制中显示，底部左侧） -->
+        <Border x:Name="RecordingBadge"
+                Visibility="Collapsed"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Bottom"
+                Margin="20,0,0,48"
+                Background="#90000000"
+                CornerRadius="10"
+                Padding="12,7">
+            <StackPanel Orientation="Horizontal" Spacing="7">
+                <Ellipse Width="8" Height="8" Fill="#FF4444" VerticalAlignment="Center"/>
+                <TextBlock x:Name="RecTimerText"
+                           Text="REC 00:00"
+                           Foreground="White"
+                           FontFamily="Consolas, Cascadia Mono"
+                           FontSize="13"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
         <!-- 底部居中的瞬时提示（截图等操作反馈）-->
         <Border x:Name="ToastPanel"
                 Visibility="Collapsed"
