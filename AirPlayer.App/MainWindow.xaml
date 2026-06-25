@@ -188,10 +188,12 @@
             </Button.Flyout>
         </Button>
 
-        <!-- 录制状态角标（录制中显示，位置/样式由 ApplyRecBadgeSettings 动态设置） -->
+        <!-- 录制状态角标（录制中显示，点击停止录制） -->
         <Border x:Name="RecordingBadge"
                 Visibility="Collapsed"
                 Background="#90000000"
+                Tapped="RecordingBadge_Tapped"
+                ToolTipService.ToolTip="点击停止录制"
                 CornerRadius="10"
                 Padding="12,7">
             <StackPanel Orientation="Horizontal" Spacing="7">

@@ -464,6 +464,10 @@ namespace AirPlayer.App
         /// <summary>录制菜单/按钮：开始或停止录制当前投屏。</summary>
         private void RecordButton_Click(object sender, RoutedEventArgs e) => ToggleRecording();
 
+        /// <summary>点击录制角标停止录制。</summary>
+        private void RecordingBadge_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+            => StopRecordingIfActive(showToast: true);
+
         /// <summary>开始/停止录制投屏到 MP4。</summary>
         private void ToggleRecording()
         {
