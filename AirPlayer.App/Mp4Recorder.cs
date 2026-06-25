@@ -332,13 +332,17 @@ namespace AirPlayer.App
         // 停止 / 释放
         // ──────────────────────────────────────────────────────────────────
 
-        /// <summary>请求停止录制，等待队列排空与文件收尾。</summary>
+        /// <summary>
+        /// 请求停止录制并等待写入线程把积压样本全部写完、Finalize 收尾。
+        /// 必须等到线程真正退出后才释放队列，否则会打断 Finalize 导致文件无 moov 索引而无法播放。
+        /// </summary>
         public void Stop()
         {
             if (_stopping) return;
             _stopping = true;
             _queue.CompleteAdding();
-            try { _writerThread.Join(8000); } catch { }
+            // 等待写入线程排空积压 + Finalize；长视频可能耗时，给足时间不设短超时
+            try { _writerThread.Join(); } catch { }
             DiagLog.Write("[REC] 录制已停止");
         }
 
@@ -347,7 +351,11 @@ namespace AirPlayer.App
             if (_disposed) return;
             Stop();
             _disposed = true;
-            try { _queue.Dispose(); } catch { }
+            // 仅在写入线程确已退出后释放队列，避免打断仍在消费的线程
+            if (!_writerThread.IsAlive)
+            {
+                try { _queue.Dispose(); } catch { }
+            }
         }
     }
 }

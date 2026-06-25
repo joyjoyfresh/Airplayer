@@ -471,29 +471,49 @@ namespace AirPlayer.App
             }
         }
 
-        /// <summary>若正在录制则停止并保存（投屏结束、退出应用时调用）。</summary>
-        private void StopRecordingIfActive(bool showToast)
+        /// <summary>
+        /// 若正在录制则停止并保存。
+        /// waitSync=true：在当前线程同步等待收尾（退出应用时用，避免文件被截断）；
+        /// waitSync=false：后台收尾，先提示“正在保存”，完成后再提示“已保存/失败”（交互停止时用，避免卡 UI）。
+        /// </summary>
+        private void StopRecordingIfActive(bool showToast, bool waitSync = false)
         {
             var rec = _recorder;
             if (rec == null) return;
             _recorder = null;
             _presenter?.SetRecordSink(null); // 停止渲染线程读回
-            try { rec.Stop(); rec.Dispose(); } catch (Exception ex) { DiagLog.Write($"[UI] 停止录制异常: {ex.Message}"); }
 
-            if (!showToast) return;
-            // 校验文件确实写出（避免误报“已保存”）
-            try
+            if (waitSync)
             {
-                var fi = new System.IO.FileInfo(rec.FilePath);
-                if (fi.Exists && fi.Length > 0)
-                    ShowToast($"录制已保存到 {fi.DirectoryName}");
-                else
-                    ShowToast("录制失败：未生成有效文件");
+                // 同步收尾（应用退出路径）：必须等写完，否则文件无索引无法播放
+                try { rec.Stop(); rec.Dispose(); } catch (Exception ex) { DiagLog.Write($"[UI] 停止录制异常: {ex.Message}"); }
+                return;
             }
-            catch
+
+            if (showToast) ShowToast("正在保存录制…");
+
+            // 后台收尾：长视频排空+Finalize 可能耗时，不阻塞 UI；完成后回 UI 线程提示结果
+            System.Threading.Tasks.Task.Run(() =>
             {
-                ShowToast("录制失败：未生成有效文件");
-            }
+                bool ok = false;
+                string dir = "";
+                try
+                {
+                    rec.Stop();
+                    rec.Dispose();
+                    var fi = new System.IO.FileInfo(rec.FilePath);
+                    ok = fi.Exists && fi.Length > 0;
+                    dir = fi.DirectoryName ?? "";
+                }
+                catch (Exception ex)
+                {
+                    DiagLog.Write($"[UI] 停止录制异常: {ex.Message}");
+                }
+
+                if (!showToast) return;
+                DispatcherQueue.TryEnqueue(() =>
+                    ShowToast(ok ? $"录制已保存到 {dir}" : "录制失败：未生成有效文件"));
+            });
         }
 
         /// <summary>菜单「更多设置…」：弹窗进行本机名称、HUD相关参数（大小、颜色、透明度等）等综合设置。</summary>
@@ -2737,7 +2757,7 @@ namespace AirPlayer.App
             ShowCursor();           // 确保退出时光标可见
             _cts?.Cancel();        // 停止 AirPlay 监听
             _receiver?.Dispose();  // 释放接收器
-            StopRecordingIfActive(showToast: false); // 停止并保存进行中的录制
+            StopRecordingIfActive(showToast: false, waitSync: true); // 同步停止并保存进行中的录制
             StopVideoPipeline();   // 释放视频管线
             _audioSink?.Dispose(); // 释放音频播放器
             _tray?.Dispose();      // 移除托盘图标
