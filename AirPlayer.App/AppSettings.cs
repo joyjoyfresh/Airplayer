@@ -51,13 +51,13 @@ namespace AirPlayer.App
         public int RecBadgeCorner { get; set; } = 0;
 
         /// <summary>录制角标水平偏移（像素）</summary>
-        public int RecBadgeOffsetX { get; set; } = 20;
+        public int RecBadgeOffsetX { get; set; } = 12;
 
         /// <summary>录制角标垂直偏移（像素）</summary>
-        public int RecBadgeOffsetY { get; set; } = 48;
+        public int RecBadgeOffsetY { get; set; } = 12;
 
         /// <summary>录制角标背景不透明度 (0.0 到 1.0)</summary>
-        public double RecBadgeBgOpacity { get; set; } = 0.56;
+        public double RecBadgeBgOpacity { get; set; } = 0.30;
 
         /// <summary>录制角标字体大小</summary>
         public int RecBadgeFontSize { get; set; } = 13;
@@ -120,9 +120,9 @@ namespace AirPlayer.App
                         if (s.Shortcuts == null) s.Shortcuts = new Dictionary<string, string>(); // 旧配置文件无此字段
                         if (string.IsNullOrEmpty(s.Theme)) s.Theme = "System"; // 旧配置文件无此字段
                         if (s.RecBadgeCorner < 0 || s.RecBadgeCorner > 3) s.RecBadgeCorner = 0;
-                        if (s.RecBadgeOffsetX < 0) s.RecBadgeOffsetX = 20;
-                        if (s.RecBadgeOffsetY < 0) s.RecBadgeOffsetY = 48;
-                        if (s.RecBadgeBgOpacity < 0 || s.RecBadgeBgOpacity > 1) s.RecBadgeBgOpacity = 0.56;
+                        if (s.RecBadgeOffsetX < 0) s.RecBadgeOffsetX = 12;
+                        if (s.RecBadgeOffsetY < 0) s.RecBadgeOffsetY = 12;
+                        if (s.RecBadgeBgOpacity < 0 || s.RecBadgeBgOpacity > 1) s.RecBadgeBgOpacity = 0.30;
                         if (s.RecBadgeFontSize <= 0) s.RecBadgeFontSize = 13;
                         return s;
                     }
