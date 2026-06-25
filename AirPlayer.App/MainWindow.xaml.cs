@@ -424,6 +424,7 @@ namespace AirPlayer.App
                 Content = panel,
                 PrimaryButtonText = "留在后台",
                 SecondaryButtonText = "直接退出",
+                CloseButtonText = "取消",
                 DefaultButton = ContentDialogButton.Primary,
                 XamlRoot = this.Content.XamlRoot
             };
