@@ -1,5 +1,7 @@
 using System;
 using System.Linq;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -112,7 +114,21 @@ namespace AirPlayer.Protocol
 
             var deviceIdInstance = string.Join(string.Empty, mDeviceId.Groups[2].Captures) + mDeviceId.Groups[3].Value;
 
-            _mdns = new MulticastService();
+            // 只使用有 RFC1918 私有 IP 的网卡，排除代理软件 TUN 虚拟网卡（如 2.0.0.1）
+            // 避免 mDNS 从错误网卡发出导致 iOS 收到不可达的 IP 而无法发现设备
+            _mdns = new MulticastService(all => all.Where(nic =>
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up) return false;
+                if (nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) return false;
+                return nic.GetIPProperties().UnicastAddresses.Any(addr =>
+                {
+                    if (addr.Address.AddressFamily != AddressFamily.InterNetwork) return false;
+                    var b = addr.Address.GetAddressBytes();
+                    return b[0] == 10 ||
+                           (b[0] == 172 && b[1] >= 16 && b[1] <= 31) ||
+                           (b[0] == 192 && b[1] == 168);
+                });
+            }));
             var sd = new ServiceDiscovery(_mdns);
 
             // 使用已绑定的控制端口发布服务，避免 iOS 连接到尚未监听的数据端口
