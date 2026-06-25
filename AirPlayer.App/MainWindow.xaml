@@ -191,12 +191,9 @@
             </Button.Flyout>
         </Button>
 
-        <!-- 录制状态角标（录制中显示，底部左侧） -->
+        <!-- 录制状态角标（录制中显示，位置/样式由 ApplyRecBadgeSettings 动态设置） -->
         <Border x:Name="RecordingBadge"
                 Visibility="Collapsed"
-                HorizontalAlignment="Left"
-                VerticalAlignment="Bottom"
-                Margin="20,0,0,48"
                 Background="#90000000"
                 CornerRadius="10"
                 Padding="12,7">

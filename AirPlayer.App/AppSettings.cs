@@ -47,6 +47,21 @@ namespace AirPlayer.App
         /// <summary>录制保存目录，如果为空或无效则使用默认路径（视频\AirPlayer）</summary>
         public string? RecordingSavePath { get; set; }
 
+        /// <summary>录制角标位置：0=左下, 1=右下, 2=左上, 3=右上</summary>
+        public int RecBadgeCorner { get; set; } = 0;
+
+        /// <summary>录制角标水平偏移（像素）</summary>
+        public int RecBadgeOffsetX { get; set; } = 20;
+
+        /// <summary>录制角标垂直偏移（像素）</summary>
+        public int RecBadgeOffsetY { get; set; } = 48;
+
+        /// <summary>录制角标背景不透明度 (0.0 到 1.0)</summary>
+        public double RecBadgeBgOpacity { get; set; } = 0.56;
+
+        /// <summary>录制角标字体大小</summary>
+        public int RecBadgeFontSize { get; set; } = 13;
+
         /// <summary>首选音频输出设备名称（为 null 表示使用默认系统播放设备）</summary>
         public string? PreferredAudioDevice { get; set; }
 
@@ -104,6 +119,11 @@ namespace AirPlayer.App
                         if (s.HudBgOpacity < 0 || s.HudBgOpacity > 1) s.HudBgOpacity = 0.56;
                         if (s.Shortcuts == null) s.Shortcuts = new Dictionary<string, string>(); // 旧配置文件无此字段
                         if (string.IsNullOrEmpty(s.Theme)) s.Theme = "System"; // 旧配置文件无此字段
+                        if (s.RecBadgeCorner < 0 || s.RecBadgeCorner > 3) s.RecBadgeCorner = 0;
+                        if (s.RecBadgeOffsetX < 0) s.RecBadgeOffsetX = 20;
+                        if (s.RecBadgeOffsetY < 0) s.RecBadgeOffsetY = 48;
+                        if (s.RecBadgeBgOpacity < 0 || s.RecBadgeBgOpacity > 1) s.RecBadgeBgOpacity = 0.56;
+                        if (s.RecBadgeFontSize <= 0) s.RecBadgeFontSize = 13;
                         return s;
                     }
                 }

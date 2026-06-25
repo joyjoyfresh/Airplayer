@@ -266,6 +266,33 @@ namespace AirPlayer.App
             brush.GradientStops.Add(new Microsoft.UI.Xaml.Media.GradientStop { Color = glowColor, Offset = 0 });
             brush.GradientStops.Add(new Microsoft.UI.Xaml.Media.GradientStop { Color = transparentGlow, Offset = 1 });
             PulseGlow.Fill = brush;
+
+            ApplyRecBadgeSettings();
+        }
+
+        /// <summary>根据设置更新录制角标的位置、透明度和字体大小。</summary>
+        private void ApplyRecBadgeSettings()
+        {
+            var s = _settings;
+            bool isRight  = s.RecBadgeCorner == 1 || s.RecBadgeCorner == 3;
+            bool isBottom = s.RecBadgeCorner == 0 || s.RecBadgeCorner == 1;
+
+            RecordingBadge.HorizontalAlignment = isRight  ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+            RecordingBadge.VerticalAlignment   = isBottom ? VerticalAlignment.Bottom  : VerticalAlignment.Top;
+
+            int ox = s.RecBadgeOffsetX;
+            int oy = s.RecBadgeOffsetY;
+            RecordingBadge.Margin = s.RecBadgeCorner switch
+            {
+                0 => new Thickness(ox, 0,  0,  oy), // 左下
+                1 => new Thickness(0,  0,  ox, oy), // 右下
+                2 => new Thickness(ox, oy, 0,  0),  // 左上
+                3 => new Thickness(0,  oy, ox, 0),  // 右上
+                _ => new Thickness(20, 0,  0,  48)
+            };
+
+            RecordingBadge.Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = s.RecBadgeBgOpacity };
+            RecTimerText.FontSize = s.RecBadgeFontSize;
         }
 
         /// <summary>把设置中的主题字符串映射为 ElementTheme（Default=跟随系统）。</summary>
@@ -628,6 +655,57 @@ namespace AirPlayer.App
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Margin = new Thickness(0, 8, 0, 0)
             };
+
+            // REC 角标设置
+            var recBadgeSectionHeader = new TextBlock
+            {
+                Text = "录制角标设置",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 12, 0, 0)
+            };
+
+            var recBadgeCornerCombo = new ComboBox
+            {
+                Header = "角标位置",
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            recBadgeCornerCombo.Items.Add("左下角");
+            recBadgeCornerCombo.Items.Add("右下角");
+            recBadgeCornerCombo.Items.Add("左上角");
+            recBadgeCornerCombo.Items.Add("右上角");
+            recBadgeCornerCombo.SelectedIndex = Math.Clamp(_settings.RecBadgeCorner, 0, 3);
+
+            var recBadgeOffsetXSlider = new Slider
+            {
+                Header = "水平偏移 (px)",
+                Minimum = 0, Maximum = 200, Value = _settings.RecBadgeOffsetX,
+                StepFrequency = 4, HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var recBadgeOffsetYSlider = new Slider
+            {
+                Header = "垂直偏移 (px)",
+                Minimum = 0, Maximum = 200, Value = _settings.RecBadgeOffsetY,
+                StepFrequency = 4, HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var recBadgeOpacitySlider = new Slider
+            {
+                Header = "背景不透明度 (%)",
+                Minimum = 0, Maximum = 100, Value = _settings.RecBadgeBgOpacity * 100,
+                StepFrequency = 5, HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+            var recBadgeSizeSlider = new Slider
+            {
+                Header = "字体大小",
+                Minimum = 10, Maximum = 24, Value = _settings.RecBadgeFontSize,
+                StepFrequency = 1, HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
+            var recBadgeContainer = new StackPanel { Spacing = 10, Margin = new Thickness(0, 0, 0, 4) };
+            recBadgeContainer.Children.Add(recBadgeCornerCombo);
+            recBadgeContainer.Children.Add(recBadgeOffsetXSlider);
+            recBadgeContainer.Children.Add(recBadgeOffsetYSlider);
+            recBadgeContainer.Children.Add(recBadgeOpacitySlider);
+            recBadgeContainer.Children.Add(recBadgeSizeSlider);
 
             // 3. 截图保存路径配置
             var screenshotHeader = new TextBlock 
@@ -1078,6 +1156,13 @@ namespace AirPlayer.App
                 _settings.HudTextColor = colors[colorCombo.SelectedIndex].Hex;
                 _settings.HudBgOpacity = hudOpacitySlider.Value / 100.0;
 
+                // 2b. 更新录制角标设置
+                _settings.RecBadgeCorner    = recBadgeCornerCombo.SelectedIndex;
+                _settings.RecBadgeOffsetX   = (int)recBadgeOffsetXSlider.Value;
+                _settings.RecBadgeOffsetY   = (int)recBadgeOffsetYSlider.Value;
+                _settings.RecBadgeBgOpacity = recBadgeOpacitySlider.Value / 100.0;
+                _settings.RecBadgeFontSize  = (int)recBadgeSizeSlider.Value;
+
                 // 3. 保存截图路径
                 var pathInput = pathBox.Text?.Trim();
                 if (string.IsNullOrEmpty(pathInput) || pathInput.Equals(defaultPath, StringComparison.OrdinalIgnoreCase))
@@ -1261,7 +1346,7 @@ namespace AirPlayer.App
             pivot.Items.Add(Tab("通用", nameContainer, closeBehaviorContainer, screenshotContainer, recordingContainer, updateContainer));
             // 音视频合并为一个选项卡，内部以「视频设置」「音频设置」分组标题区分
             pivot.Items.Add(Tab("音视频", resolutionContainer, fpsContainer, audioContainer));
-            pivot.Items.Add(Tab("外观", themeContainer, glowContainer, hudSectionHeader, hudContainer));
+            pivot.Items.Add(Tab("外观", themeContainer, glowContainer, hudSectionHeader, hudContainer, recBadgeSectionHeader, recBadgeContainer));
             pivot.Items.Add(Tab("快捷键", shortcutContainer));
 
             dlg = new ContentDialog
