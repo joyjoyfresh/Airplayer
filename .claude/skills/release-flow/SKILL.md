@@ -50,38 +50,23 @@ git add AirPlayer.App/AirPlayer.App.csproj tools/installer.iss README.md CHANGEL
 git commit -m "chore: 版本升至 vX.X.X，更新 CHANGELOG/README/发布说明"
 ```
 
-### 6. 构建绿色包
+### 6. 一键发布（构建 + tag + push + GitHub Release）
+版本号与文档 commit 完成后，直接执行，不要停下来询问用户：
 ```
-powershell.exe -ExecutionPolicy Bypass -File "tools/build-release.ps1" -Version X.X.X
+powershell.exe -ExecutionPolicy Bypass -File "tools/publish-release.ps1" -Version X.X.X
 ```
-- 注意：本仓库 CLAUDE.md 提到的 `rtk` 在此环境不可用，直接用原命令。
-- 成功产出 `publish/AirPlayer-X.X.X-win-x64/`（目录）和 `publish/AirPlayer-X.X.X-win-x64.zip`。
-- 构建输出可能很大，用 `tail` 截取末尾确认 Done 即可。
+脚本自动完成以下全部步骤：
+1. 构建绿色包 → `publish/AirPlayer-X.X.X-win-x64.zip`
+2. 用 Inno Setup 构建安装包 → `publish/AirPlayer-X.X.X-setup.exe`（需已安装 Inno Setup 6）
+3. `git tag -a vX.X.X -m "AirPlayer vX.X.X"` + `git push origin main --tags`
+4. `gh release create` 上传两个产物 + 发布说明，自动创建 GitHub Release
 
-### 7. 构建安装包
-```
-"C:/Program Files (x86)/Inno Setup 6/iscc.exe" "tools/installer.iss"
-```
-- 成功产出 `publish/AirPlayer-X.X.X-setup.exe`。
-- 用 `tail -3` 确认 `Successful compile`。
-
-### 8. 汇报产物与版本变更
-列出两个产物文件名 + 大小，以及本版变更摘要。
-
-### 9. 打 tag 并推送（直接执行，无需确认）
-版本号与文档提交、两个包构建成功后，直接打 tag 推送，不要停下来询问用户：
-```
-git tag -a vX.X.X -m "AirPlayer vX.X.X"
-git push origin main --tags
-```
-然后告知用户去 GitHub `joyjoyfresh/Airplayer` → Releases → Draft a new release：
-- 选 tag `vX.X.X`
-- 标题 `AirPlayer vX.X.X`
-- 上传 `AirPlayer-X.X.X-win-x64.zip` 和 `AirPlayer-X.X.X-setup.exe`
-- 描述从 `docs/RELEASE_NOTES_vX.X.X.md` 复制
+构建输出较大，用 `tail -10` 截取末尾确认 `Done!` 及 Release URL 即可。
 
 ## 注意事项
 
-- 若构建失败：先看错误，常见是 `.NET 8 SDK` 或 `Windows App SDK workload` 缺失；版本号未传 `-p:Version` 导致 csproj 与 tag 不一致。
-- Inno Setup 路径固定 `C:/Program Files (x86)/Inno Setup 6/iscc.exe`，若不在该路径需先 `where iscc` 探测。
-- Step 1–8（版本号同步、文档、构建、提交）+ Step 9（打 tag 推送）一气呵成，全程不停下询问；仅当构建失败或遇到歧义时才暂停。
+- 若构建失败：先看错误，常见是 `.NET 8 SDK` 或 `Windows App SDK workload` 缺失。
+- Inno Setup 未安装时脚本会跳过安装包并打印 Warning，仍会继续发布 zip。
+- `gh` CLI 需已安装（`winget install --id GitHub.cli`）并完成 `gh auth login`；脚本会自动在 `Program Files\GitHub CLI\gh.exe` 查找，不依赖 PATH。
+- 注意：本仓库 CLAUDE.md 提到的 `rtk` 在此环境不可用，直接用原命令。
+- 全程不停下询问用户；仅当构建失败或遇到歧义时才暂停。
