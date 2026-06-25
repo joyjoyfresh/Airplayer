@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using System.Threading;
 using AirPlayer.Protocol.Models;
@@ -50,6 +51,14 @@ namespace AirPlayer.App.Rendering
         private int _panelWidth;
         private int _panelHeight;
         private bool _processorReady;
+
+        // ── 录制：解码后 NV12 读回回调（在渲染线程调用，参数=连续NV12字节, 宽, 高）──
+        private volatile Action<byte[], int, int>? _recordSink;
+        private ID3D11Texture2D? _recStaging; // 录制用持久暂存纹理（CPU 可读）
+        private int _recStagingW, _recStagingH;
+
+        /// <summary>设置/清除录制读回回调。null=停止读回。</summary>
+        public void SetRecordSink(Action<byte[], int, int>? sink) => _recordSink = sink;
 
         /// <summary>分辨率变化事件（在渲染线程触发，带宽高参数）</summary>
         public event EventHandler<(int Width, int Height)>? ResolutionChanged;
@@ -410,6 +419,10 @@ namespace AirPlayer.App.Rendering
 
                     _processor!.Blt(nv12Tex!, subIdx, backBuf);
 
+                    // 录制：在画面有效时读回解码后的 NV12 帧投递给录制器（仅录制中触发）
+                    if (_recordSink != null)
+                        CaptureNv12ForRecord(nv12Tex!, subIdx);
+
                     // 截图：在 Present 前从后台缓冲抓取当前帧（此时已是渲染完成的画面）
                     if (_screenshotPending && _screenshotPath != null)
                     {
@@ -526,6 +539,80 @@ namespace AirPlayer.App.Rendering
             }
         }
 
+        // ──────────────────────────────────────────────────────────────────
+        // 录制：NV12 读回
+        // ──────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 把解码后的 NV12 纹理读回系统内存并按 stride=videoWidth 连续打包，投递给录制器。
+        /// 在渲染线程调用（持有 D3D 上下文）。读回有 GPU 同步开销，仅录制中执行。
+        /// </summary>
+        private void CaptureNv12ForRecord(ID3D11Texture2D source, uint subIdx)
+        {
+            try
+            {
+                var sd = source.Description;
+                int texW = (int)sd.Width;                 // 纹理对齐宽（16 对齐，含右侧填充）
+                int texH = (int)sd.Height;                // 亮度高度（16 对齐）
+                if (texW <= 0 || texH <= 0) return;
+
+                // 直接用纹理的对齐尺寸编码：保证 16 对齐，避开 H264 编码器对非对齐宽高的限制
+                int w = texW, h = texH;
+
+                // 持久暂存纹理（单子资源，CPU 可读）；尺寸变化时重建
+                if (_recStaging == null || _recStagingW != texW || _recStagingH != texH)
+                {
+                    _recStaging?.Dispose();
+                    _recStaging = _gpu!.Device.CreateTexture2D(new Texture2DDescription
+                    {
+                        Width = (uint)texW,
+                        Height = (uint)texH,
+                        MipLevels = 1,
+                        ArraySize = 1,
+                        Format = sd.Format,                // NV12
+                        SampleDescription = new Vortice.DXGI.SampleDescription(1, 0),
+                        Usage = ResourceUsage.Staging,
+                        BindFlags = BindFlags.None,
+                        CPUAccessFlags = CpuAccessFlags.Read,
+                        MiscFlags = ResourceOptionFlags.None
+                    });
+                    _recStagingW = texW;
+                    _recStagingH = texH;
+                }
+
+                // 从解码纹理数组的指定层复制整个子资源到暂存（子资源 0）
+                _gpu!.DeviceContext.CopySubresourceRegion(_recStaging, 0, 0, 0, 0, source, subIdx, null);
+
+                var map = _gpu.DeviceContext.Map(_recStaging, 0, MapMode.Read, MapFlags.None);
+                try
+                {
+                    int rowPitch = (int)map.RowPitch;
+                    var outBuf = new byte[w * h * 3 / 2]; // 连续 NV12，stride=w
+                    unsafe
+                    {
+                        byte* src = (byte*)map.DataPointer;
+                        // Y 平面：h 行，每行取前 w 字节
+                        for (int y = 0; y < h; y++)
+                            Marshal.Copy((IntPtr)(src + (long)y * rowPitch), outBuf, y * w, w);
+                        // UV 平面：起始于亮度满高 texH 行之后；h/2 行，每行取前 w 字节
+                        byte* uv = src + (long)rowPitch * texH;
+                        int uvOff = w * h;
+                        for (int y = 0; y < h / 2; y++)
+                            Marshal.Copy((IntPtr)(uv + (long)y * rowPitch), outBuf, uvOff + y * w, w);
+                    }
+                    _recordSink?.Invoke(outBuf, w, h);
+                }
+                finally
+                {
+                    _gpu.DeviceContext.Unmap(_recStaging, 0);
+                }
+            }
+            catch (Exception ex)
+            {
+                DiagLog.Write($"[PRS] 录制读回失败: {ex.Message}");
+            }
+        }
+
 
         // ──────────────────────────────────────────────────────────────────
         // 释放
@@ -543,6 +630,9 @@ namespace AirPlayer.App.Rendering
             _renderThread = null;
 
             // 2. 按依赖顺序释放组件（由内向外）
+            _recStaging?.Dispose();  // 录制暂存纹理
+            _recStaging = null;
+
             _processor?.Dispose();   // 视频处理器（持有视图，先释放）
             _processor = null;
 
