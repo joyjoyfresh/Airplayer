@@ -144,6 +144,8 @@ namespace AirPlayer.App
 
         // 软件播放增益，[0,1]，1=原始音量；由 iOS 端音量调整经 SetVolume 设置（volatile 保证跨线程可见）
         private volatile float _gain = 1.0f;
+        // 用户手动设置的音量增益 [0,1]，最终增益 = _gain * _userGain
+        private volatile float _userGain = 1.0f;
 
         /// <summary>当前音频时钟（微秒，NTP epoch）— 供视频同步参考</summary>
         public ulong CurrentClock => _basePtsSet
@@ -307,10 +309,17 @@ namespace AirPlayer.App
             AudioDiagLog.Write($"[VOL] iOS 音量 {airplayVolume:0.##} dB → 增益 {_gain:0.###}");
         }
 
+        /// <summary>设置用户手动音量（线程安全）。</summary>
+        /// <param name="percent">0–100，100 = 原始音量。</param>
+        public void SetUserVolume(int percent)
+        {
+            _userGain = (float)Math.Clamp(percent / 100.0, 0.0, 1.0);
+        }
+
         /// <summary>按当前增益就地缩放 16-bit PCM 采样（小端）。</summary>
         private void ApplyGain(byte[] data, int length)
         {
-            float g = _gain;
+            float g = _gain * _userGain;        // iOS 音量 × 用户音量
             if (g >= 0.999f) return;            // 接近原始音量：无需处理
             if (g <= 0.0001f)                   // 静音：直接清零
             {

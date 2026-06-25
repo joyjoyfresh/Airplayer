@@ -944,9 +944,20 @@ namespace AirPlayer.App
                 audioDeviceCombo.SelectedIndex = 0; // 默认第一项（系统默认）
             }
 
+            var audioVolumeSlider = new Slider
+            {
+                Header = "播放音量 (%)",
+                Minimum = 0,
+                Maximum = 100,
+                Value = _settings.AudioVolume,
+                StepFrequency = 1,
+                HorizontalAlignment = HorizontalAlignment.Stretch
+            };
+
             var audioContainer = new StackPanel { Spacing = 6 };
             audioContainer.Children.Add(audioHeader);
             audioContainer.Children.Add(audioDeviceCombo);
+            audioContainer.Children.Add(audioVolumeSlider);
 
             // 5. 视频分辨率配置
             var resolutionHeader = new TextBlock 
@@ -1276,7 +1287,10 @@ namespace AirPlayer.App
                     }
                 }
 
-                // 4. 保存音频输出设备设置
+                // 4. 保存音频输出设备设置及音量
+                _settings.AudioVolume = (int)Math.Clamp(audioVolumeSlider.Value, 0, 100);
+                _audioSink?.SetUserVolume(_settings.AudioVolume);
+
                 string? oldAudioDevice = _settings.PreferredAudioDevice;
                 int audioIdx = audioDeviceCombo.SelectedIndex;
                 string? newAudioDevice = null;
@@ -1325,6 +1339,7 @@ namespace AirPlayer.App
                             _audioSink.Dispose();
                             _audioSink = new AudioSink(_settings.PreferredAudioDevice);
                             _audioSink.Initialize();
+                            _audioSink.SetUserVolume(_settings.AudioVolume);
                             DiagLog.Write("[UI] 音频输出设备发生变化，已实时重启 AudioSink");
                             ShowToast("音频设备已切换");
                         }
@@ -1799,7 +1814,8 @@ namespace AirPlayer.App
                 {
                     _audioSink = new AudioSink(_settings.PreferredAudioDevice);
                     _audioSink.Initialize();
-                    _audioSink.SetVolume(_lastAirplayVolume); // 应用 iOS 端当前音量（可能在建播放器前已下发）
+                    _audioSink.SetVolume(_lastAirplayVolume);       // 应用 iOS 端当前音量（可能在建播放器前已下发）
+                    _audioSink.SetUserVolume(_settings.AudioVolume); // 应用用户设置的音量
                 }
 
                 ShowToast("已连接，正在投屏…"); // 连接反馈
