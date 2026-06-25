@@ -258,21 +258,7 @@ namespace AirPlayer.App
             HudText.FontSize = _settings.HudFontSize;
             HudText.Foreground = new SolidColorBrush(GetColorFromHex(_settings.HudTextColor));
             HudPanel.Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = _settings.HudBgOpacity };
-            {
-                bool hudRight  = _settings.HudCorner == 1 || _settings.HudCorner == 3;
-                bool hudBottom = _settings.HudCorner == 2 || _settings.HudCorner == 3;
-                HudPanel.HorizontalAlignment = hudRight  ? HorizontalAlignment.Right : HorizontalAlignment.Left;
-                HudPanel.VerticalAlignment   = hudBottom ? VerticalAlignment.Bottom  : VerticalAlignment.Top;
-                int hox = _settings.HudOffsetX, hoy = _settings.HudOffsetY;
-                HudPanel.Margin = _settings.HudCorner switch
-                {
-                    0 => new Thickness(hox, hoy, 0,   0  ), // 左上
-                    1 => new Thickness(0,   hoy, hox, 0  ), // 右上
-                    2 => new Thickness(hox, 0,   0,   hoy), // 左下
-                    3 => new Thickness(0,   0,   hox, hoy), // 右下
-                    _ => new Thickness(12,  12,  0,   0  )
-                };
-            }
+            ApplyHudPosition();
 
             // 应用待机呼吸灯颜色（WinUI 3 中修改现有 GradientStop.Color 不会触发形状重绘，因此重新创建画刷并赋值强制刷新）
             var glowColor = GetColorFromHex(_settings.PulseGlowColor);
@@ -308,6 +294,35 @@ namespace AirPlayer.App
 
             RecordingBadge.Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = s.RecBadgeBgOpacity };
             RecTimerText.FontSize = s.RecBadgeFontSize;
+        }
+
+        /// <summary>更新 HUD 位置；若 HUD 与录制角标同角且录制中，自动下移 HUD 避免重叠。</summary>
+        private void ApplyHudPosition()
+        {
+            bool hudRight  = _settings.HudCorner == 1 || _settings.HudCorner == 3;
+            bool hudBottom = _settings.HudCorner == 2 || _settings.HudCorner == 3;
+            HudPanel.HorizontalAlignment = hudRight  ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+            HudPanel.VerticalAlignment   = hudBottom ? VerticalAlignment.Bottom  : VerticalAlignment.Top;
+
+            int hox = _settings.HudOffsetX;
+            int hoy = _settings.HudOffsetY;
+
+            // 同角冲突：录制角标优先，HUD 顺着 Y 轴往内偏移让出角标空间
+            if (_recorder != null && _settings.HudCorner == _settings.RecBadgeCorner)
+            {
+                int badgeH = _settings.RecBadgeFontSize + 24; // 字号 + 上下 padding 估算
+                int displaced = _settings.RecBadgeOffsetY + badgeH + 8; // 角标外边 + 8px 间距
+                if (displaced > hoy) hoy = displaced;
+            }
+
+            HudPanel.Margin = _settings.HudCorner switch
+            {
+                0 => new Thickness(hox, hoy, 0,   0  ), // 左上
+                1 => new Thickness(0,   hoy, hox, 0  ), // 右上
+                2 => new Thickness(hox, 0,   0,   hoy), // 左下
+                3 => new Thickness(0,   0,   hox, hoy), // 右下
+                _ => new Thickness(12,  12,  0,   0  )
+            };
         }
 
         /// <summary>把设置中的主题字符串映射为 ElementTheme（Default=跟随系统）。</summary>
@@ -524,6 +539,7 @@ namespace AirPlayer.App
                     };
                 }
                 _recTimer.Start();
+                ApplyHudPosition(); // 录制开始后重算 HUD 位置（处理同角冲突）
             }
             catch (Exception ex)
             {
@@ -544,9 +560,10 @@ namespace AirPlayer.App
             if (rec == null) return;
             _recorder = null;
             _presenter?.SetRecordSink(null); // 停止渲染线程读回
-            // 隐藏录制状态角标
+            // 隐藏录制状态角标，恢复 HUD 位置
             _recTimer?.Stop();
             RecordingBadge.Visibility = Visibility.Collapsed;
+            ApplyHudPosition(); // _recorder 已为 null，HUD 回到原位
 
             if (waitSync)
             {
@@ -1524,6 +1541,7 @@ namespace AirPlayer.App
         private void SetHudVisible(bool on)
         {
             HudPanel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            if (on) ApplyHudPosition(); // 显示时重算，确保同角冲突已处理
             _settings.ShowHud = on;
             _settings.Save();
         }
