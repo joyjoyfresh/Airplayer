@@ -387,11 +387,63 @@ namespace AirPlayer.App
         /// <summary>关闭按钮：按设置最小化到托盘后台常驻，或直接退出。</summary>
         private void AppWindow_Closing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
         {
-            if (_settings.CloseToTray && !_forceExit)
+            if (_forceExit) return; // 托盘「退出」或程序内部强制退出，直接放行
+
+            if (_settings.ShowClosePrompt)
             {
-                args.Cancel = true; // 取消关闭，改为隐藏到托盘
+                args.Cancel = true; // 取消本次关闭，改由对话框决定
+                _ = HandleClosePromptAsync();
+                return;
+            }
+
+            if (_settings.CloseToTray)
+            {
+                args.Cancel = true;
                 HideToTray();
             }
+        }
+
+        /// <summary>关闭询问对话框：让用户选择留在后台或直接退出，并可选记住选择。</summary>
+        private async Task HandleClosePromptAsync()
+        {
+            var dontAskCheck = new CheckBox { Content = "下次不再询问" };
+            var desc = new TextBlock
+            {
+                Text = "保持后台运行时，有 iOS 设备投屏会自动弹出窗口；托盘图标右键可随时退出。",
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 12)
+            };
+            var panel = new StackPanel { Spacing = 4 };
+            panel.Children.Add(desc);
+            panel.Children.Add(dontAskCheck);
+
+            var dlg = new ContentDialog
+            {
+                Title = "关闭 AirPlayer",
+                Content = panel,
+                PrimaryButtonText = "留在后台",
+                SecondaryButtonText = "直接退出",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = this.Content.XamlRoot
+            };
+
+            var result = await ShowDialogAsync(dlg);
+            if (result == ContentDialogResult.None) return; // 用户取消，窗口保持打开
+
+            bool toTray = result == ContentDialogResult.Primary;
+
+            if (dontAskCheck.IsChecked == true)
+            {
+                _settings.ShowClosePrompt = false;
+                _settings.CloseToTray = toTray; // 记住选择作为默认行为
+                _settings.Save();
+            }
+
+            if (toTray)
+                HideToTray();
+            else
+                ExitApp();
         }
 
         /// <summary>隐藏窗口到托盘（应用继续后台运行，接收投屏）。隐藏前先断开当前投屏。</summary>
@@ -1014,8 +1066,20 @@ namespace AirPlayer.App
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 2, 0, 0)
             };
+            var closePromptSwitch = new ToggleSwitch
+            {
+                Header = "关闭时询问",
+                IsOn = _settings.ShowClosePrompt,
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+            // 开启询问时，下方「关闭窗口时」选项仅作为记住选择的默认值参考
+            closePromptSwitch.Toggled += (_, _) =>
+                closeBehaviorCombo.IsEnabled = !closePromptSwitch.IsOn;
+            closeBehaviorCombo.IsEnabled = !_settings.ShowClosePrompt;
+
             var closeBehaviorContainer = new StackPanel { Spacing = 6 };
             closeBehaviorContainer.Children.Add(closeBehaviorHeader);
+            closeBehaviorContainer.Children.Add(closePromptSwitch);
             closeBehaviorContainer.Children.Add(closeBehaviorCombo);
             closeBehaviorContainer.Children.Add(closeBehaviorTip);
 
@@ -1317,6 +1381,7 @@ namespace AirPlayer.App
                 _settings.Theme = themeCombo.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
 
                 // 9. 保存关闭窗口行为（即时生效，下次关闭按此处理）
+                _settings.ShowClosePrompt = closePromptSwitch.IsOn;
                 _settings.CloseToTray = closeBehaviorCombo.SelectedIndex == 0;
 
                 // 9.5 保存自动更新设置
