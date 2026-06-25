@@ -27,6 +27,13 @@ try {
     $zipPath  = Join-Path $root "publish\$zipName"
     $notesPath = Join-Path $root "docs\RELEASE_NOTES_v$Version.md"
 
+    # ── 0. Resolve gh path (winget installs to Program Files, may not be in PATH yet) ──
+    $gh = (Get-Command gh -ErrorAction SilentlyContinue)?.Source
+    if (-not $gh) {
+        $gh = "${env:ProgramFiles}\GitHub CLI\gh.exe"
+        if (-not (Test-Path $gh)) { throw "gh CLI not found. Install via: winget install --id GitHub.cli" }
+    }
+
     # ── 1. Check prerequisites ────────────────────────────────────────────────
     Write-Host "[1/4] Checking prerequisites ..."
     if (-not (Test-Path $notesPath)) {
@@ -55,7 +62,7 @@ try {
 
     # ── 4. Create GitHub Release ──────────────────────────────────────────────
     Write-Host "[4/4] Creating GitHub Release $tag ..."
-    gh release create $tag $zipPath `
+    & $gh release create $tag $zipPath `
         --title "AirPlayer $tag" `
         --notes-file $notesPath
 
